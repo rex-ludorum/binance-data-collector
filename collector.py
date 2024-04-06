@@ -80,10 +80,10 @@ def getAggIds(records):
 			break
 	return aggIds
 
-def writeRecords(writeClient, records, commonAttributes, tableName, mysns):
+def writeRecords(symbol, writeClient, records, commonAttributes, tableName, mysns):
 	try:
 		aggIds = getAggIds(records)
-		print("Writing %d %s records (%s - %s)" % (len(records), commonAttributes['Dimensions'][0]['Value'], aggIds[0], aggIds[1]))
+		print("Writing %d %s records (%s - %s)" % (len(records), symbol, aggIds[0], aggIds[1]))
 		result = writeClient.write_records(DatabaseName=DATABASE_NAME, TableName=tableName, CommonAttributes=commonAttributes, Records=records)
 		status = result['ResponseMetadata']['HTTPStatusCode']
 		print("Processed %d %s records (%s - %s). WriteRecords HTTPStatusCode: %s" % (len(records), commonAttributes['Dimensions'][0]['Value'], aggIds[0], aggIds[1], status))
@@ -113,10 +113,10 @@ def updateRecordTime(record, lastTrade, recordList, symbol):
 	recordList.append(record)
 
 # Check if we have reached the 1 kB write size and write the records
-def checkWriteThreshold(writeClient, trades, commonAttributes, tableName, mysns):
+def checkWriteThreshold(symbol, writeClient, trades, commonAttributes, tableName, mysns):
 	if len(trades) == NUM_RECORDS:
 		# print(json.dumps(trades, indent=2))
-		writeRecords(writeClient, trades, commonAttributes, tableName, mysns)
+		writeRecords(symbol, writeClient, trades, commonAttributes, tableName, mysns)
 		trades.clear()
 
 async def collectData():
@@ -163,12 +163,12 @@ async def collectData():
 						if handleFirstBtcGap or lastBtcTrade['a'] != '0':
 							handleGap(response, btcTrades, lastBtcTrade, writeClient, commonAttributesBtc, BTC_TABLE_NAME, mysns)
 						updateRecordTime(record, lastBtcTrade, btcTrades, response['s'])
-						checkWriteThreshold(writeClient, btcTrades, commonAttributesBtc, BTC_TABLE_NAME, mysns)
+						checkWriteThreshold(response['s'], writeClient, btcTrades, commonAttributesBtc, BTC_TABLE_NAME, mysns)
 					elif response["s"] == "ETHUSDT":
 						if handleFirstEthGap or lastEthTrade['a'] != '0':
 							handleGap(response, ethTrades, lastEthTrade, writeClient, commonAttributesEth, ETH_TABLE_NAME, mysns)
 						updateRecordTime(record, lastEthTrade, ethTrades, response['s'])
-						checkWriteThreshold(writeClient, ethTrades, commonAttributesEth, ETH_TABLE_NAME, mysns)
+						checkWriteThreshold(response['s'], writeClient, ethTrades, commonAttributesEth, ETH_TABLE_NAME, mysns)
 		except websockets.ConnectionClosedOK as e:
 			traceback.print_exc()
 			publishAndPrintError(mysns, e, "Websocket ConnectionClosedOK")
@@ -199,7 +199,7 @@ def getGap(symbol, aggId, n, trades, lastTrade, writeClient, commonAttributes, t
 		for trade in response.json():
 			record = prepareRecord(trade)
 			updateRecordTime(record, lastTrade, trades, symbol)
-			checkWriteThreshold(writeClient, trades, commonAttributes, tableName, mysns)
+			checkWriteThreshold(symbol, writeClient, trades, commonAttributes, tableName, mysns)
 	except Exception as e:
 		publishAndPrintError(mysns, e, "Requests")
 

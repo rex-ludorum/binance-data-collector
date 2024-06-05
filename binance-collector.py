@@ -45,14 +45,14 @@ def prepareRecord(response):
 	response.pop("f")
 	response.pop("l")
 	response.pop("M")
-	isMarketBuy = str(response['m']).lower() if isinstance(response['m'], bool) else response['m']
+	isBuyerMaker = str(response['m']).lower() if isinstance(response['m'], bool) else response['m']
 	record = {
 		'Time': str(response['T']),
 		'MeasureValues': [
 			prepareMeasure('aggregatedTradeId', response['a'], 'BIGINT'),
 			prepareMeasure('price', response['p'], 'DOUBLE'),
 			prepareMeasure('quantity', response['q'], 'DOUBLE'),
-			prepareMeasure('isMarketBuy', isMarketBuy, 'BOOLEAN')
+			prepareMeasure('isBuyerMaker', isBuyerMaker, 'BOOLEAN')
 		]
 	}
 	return record

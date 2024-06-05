@@ -101,6 +101,9 @@ def writeRecords(symbol, writeClient, records, commonAttributes, mysns):
 	try:
 		tradeIds = getTradeIds(records)
 		print("Writing %d %s records (%s - %s)" % (len(records), symbol, tradeIds[0], tradeIds[1]))
+		gap = int(tradeIds[1]) - int(tradeIds[0])
+		if gap != 29:
+			print("Only writing %d records" % (gap + 1))
 		result = writeClient.write_records(DatabaseName=DATABASE_NAME, TableName=symbol, CommonAttributes=commonAttributes, Records=records)
 		status = result['ResponseMetadata']['HTTPStatusCode']
 		print("Processed %d %s records (%s - %s). WriteRecords HTTPStatusCode: %s" % (len(records), commonAttributes['Dimensions'][0]['Value'], tradeIds[0], tradeIds[1], status))
@@ -180,15 +183,15 @@ async def collectData(symbol):
 			await websocket.send(json.dumps(tradesRequest))
 			while True:
 				response = json.loads(await websocket.recv())
-				if response['channel'] == 'market_trades':
-					trades = response['events'][0]['trades']
-					trades.reverse()
-					for trade in trades:
+				if response['channel'] == 'market_trades' and response['events'][0]['type'] == 'update':
+					responseTrades = response['events'][0]['trades']
+					cleanTrades(responseTrades)
+					for trade in responseTrades:
 						record = prepareRecord(trade)
-						if handleFirstGap or lastTrade['trade_id'] != '0':
-							handleGap(response, trades, lastTrade, writeClient, commonAttributes, mysns)
-						updateRecordTime(record, lastTrade, trades, response['product_id'])
-						checkWriteThreshold(response['product_id'], writeClient, trades, commonAttributes, mysns)
+						if handleFirstGap or lastTrade['tradeId'] != '0':
+							handleGap(trade, trades, lastTrade, writeClient, commonAttributes, mysns)
+						updateRecordTime(record, lastTrade, trades, trade['product_id'])
+						checkWriteThreshold(trade['product_id'], writeClient, trades, commonAttributes, mysns)
 		except websockets.ConnectionClosedOK as e:
 			traceback.print_exc()
 			publishAndPrintError(mysns, e, "Websocket ConnectionClosedOK")
@@ -240,25 +243,7 @@ def getGap(symbol, endId, endTime, trades, startTime, lastTrade, writeClient, co
 		response = requests.get(url, params=params, headers=headers)
 		response.raise_for_status()
 		responseTrades = response.json()['trades']
-		for idx, _ in enumerate(responseTrades):
-			MoreWeirdTradeIds = True
-			while MoreWeirdTradeIds:
-				try:
-					if (idx >= len(responseTrades)):
-						break
-					int(responseTrades[idx]['trade_id'])
-					MoreWeirdTradeIds = False
-				except ValueError:
-					responseTrades.pop(idx)
-		responseTrades.sort(key=cmp_to_key(lambda item1, item2: int(item1['trade_id']) - int(item2['trade_id'])))
-		first = True
-		for i, e in reversed(list(enumerate(responseTrades))):
-			if first:
-				first = False
-				continue
-			if int(e['trade_id']) != int(responseTrades[i + 1]['trade_id']) - 1:
-				del(responseTrades[:i+1])
-				break
+		cleanTrades(responseTrades)
 		# print(responseTrades)
 
 		'''
@@ -307,14 +292,36 @@ def getGap(symbol, endId, endTime, trades, startTime, lastTrade, writeClient, co
 	except Exception as e:
 		publishAndPrintError(mysns, e, "Requests")
 
+def cleanTrades(trades):
+	for idx, _ in enumerate(trades):
+		MoreWeirdTradeIds = True
+		while MoreWeirdTradeIds:
+			try:
+				if (idx >= len(trades)):
+					break
+				int(trades[idx]['trade_id'])
+				MoreWeirdTradeIds = False
+			except ValueError:
+				trades.pop(idx)
+	trades.sort(key=cmp_to_key(lambda item1, item2: int(item1['trade_id']) - int(item2['trade_id'])))
+	first = True
+	for i, e in reversed(list(enumerate(trades))):
+		if first:
+			first = False
+			continue
+		if int(e['trade_id']) != int(trades[i + 1]['trade_id']) - 1:
+			del(trades[:i+1])
+			break
+
 parser = argparse.ArgumentParser(description='Collect trading data from Coinbase and send it to AWS Timestream.')
 parser.add_argument('symbol', help='the trading pair to collect data from', choices=['BTC-USD', 'ETH-USD'])
 args = parser.parse_args()
 symbol = vars(args)['symbol']
 
-# asyncio.run(collectData(symbol))
+asyncio.run(collectData(symbol))
 
 # Test commands for handling gaps
+'''
 commonAttributes = {
 	'Dimensions': [
 		{'Name': 'symbol', 'Value': symbol}
@@ -323,11 +330,12 @@ commonAttributes = {
 	'MeasureValueType': 'MULTI',
 	'TimeUnit': 'MICROSECONDS'
 }
+'''
 
-writeClient = boto3.client('timestream-write', region_name=REGION_NAME, aws_access_key_id=ACCESS_KEY, aws_secret_access_key=AWS_SECRET_ACCESS_KEY)
+# writeClient = boto3.client('timestream-write', region_name=REGION_NAME, aws_access_key_id=ACCESS_KEY, aws_secret_access_key=AWS_SECRET_ACCESS_KEY)
 
-mysns = boto3.client("sns", region_name=REGION_NAME, aws_access_key_id=ACCESS_KEY, aws_secret_access_key=AWS_SECRET_ACCESS_KEY)
-handleGap({'trade_id': '999999999', 'time': '2024-06-02T00:00:00.000000Z', 'product_id': 'BTC-USD'}, [], {'Time': '1617216665966502', 'offset': '0', 'tradeId': '151436694'}, writeClient, commonAttributes, mysns)
+# mysns = boto3.client("sns", region_name=REGION_NAME, aws_access_key_id=ACCESS_KEY, aws_secret_access_key=AWS_SECRET_ACCESS_KEY)
+# handleGap({'trade_id': '999999999', 'time': '2024-06-02T00:00:00.000000Z', 'product_id': 'BTC-USD'}, [], {'Time': '1617216665966502', 'offset': '0', 'tradeId': '151436694'}, writeClient, commonAttributes, mysns)
 # handleGap({'trade_id': '151436698', 'time': '2024-06-02T00:00:00.000000Z', 'product_id': 'BTC-USD'}, [], {'Time': '1617216665966502', 'offset': '0', 'tradeId': '151436694'}, {}, {}, {})
 
 # Used to find the max window size (260)

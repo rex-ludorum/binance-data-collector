@@ -28,8 +28,8 @@ NUM_RECORDS = 30
 
 MAX_REST_API_TRADES = 1000
 
-def publishAndPrintError(mysns, error, subject):
-	errorMessage = repr(error) + " encountered at " + str(time.strftime("%H:%M:%S", time.localtime()))
+def publishAndPrintError(mysns, error, subject, symbol):
+	errorMessage = repr(error) + " encountered for " + symbol + " at " + str(time.strftime("%H:%M:%S", time.localtime()))
 	print(errorMessage)
 	try:
 		mysns.publish(
@@ -100,7 +100,7 @@ def getTradeIds(records):
 def writeRecords(symbol, writeClient, records, commonAttributes, mysns):
 	try:
 		tradeIds = getTradeIds(records)
-		print("Writing %d %s records (%s - %s)" % (len(records), symbol, tradeIds[0], tradeIds[1]))
+		print("Writing %d %s records (%s - %s) at %s" % (len(records), symbol, tradeIds[0], tradeIds[1], str(datetime.datetime.now())))
 		gap = int(tradeIds[1]) - int(tradeIds[0])
 		if gap != 29:
 			print("Only writing %d records" % (gap + 1))
@@ -109,14 +109,14 @@ def writeRecords(symbol, writeClient, records, commonAttributes, mysns):
 		print("Processed %d %s records (%s - %s). WriteRecords HTTPStatusCode: %s" % (len(records), commonAttributes['Dimensions'][0]['Value'], tradeIds[0], tradeIds[1], status))
 	except writeClient.exceptions.RejectedRecordsException as e:
 		# print("RejectedRecords at", str(time.strftime("%H:%M:%S", time.localtime())), ":", e)
-		publishAndPrintError(mysns, e, "RejectedRecords")
+		publishAndPrintError(mysns, e, "RejectedRecords", symbol)
 		for rr in e.response["RejectedRecords"]:
 			print("Rejected Index " + str(rr["RecordIndex"]) + ": " + rr["Reason"])
 			print(json.dumps(records[rr['RecordIndex']], indent=2))
 			if "ExistingVersion" in rr:
 				print("Rejected record existing version: ", rr["ExistingVersion"])
 	except Exception as e:
-		publishAndPrintError(mysns, e, "Other WriteClient")
+		publishAndPrintError(mysns, e, "Other WriteClient", symbol)
 
 # Timestream does not allow two records with the same timestamp and dimensions to have different measure values
 # Therefore, add one us to the later timestamp
@@ -124,7 +124,7 @@ def updateRecordTime(record, lastTrade, recordList, symbol):
 	recordTime = record['Time']
 	if lastTrade and int(record['Time']) <= int(lastTrade['Time']) + int(lastTrade['offset']):
 		record['Time'] = str(int(lastTrade['Time']) + int(lastTrade['offset']) + 1)
-		print("Time %s for %s conflicts with last trade time (%s with offset %s, tradeId %s), updating to %s" % (recordTime, symbol, lastTrade['Time'], lastTrade['offset'], lastTrade['tradeId'], record['Time']))
+		# print("Time %s for %s conflicts with last trade time (%s with offset %s, tradeId %s), updating to %s" % (recordTime, symbol, lastTrade['Time'], lastTrade['offset'], lastTrade['tradeId'], record['Time']))
 		lastTrade['offset'] = str(int(lastTrade['offset']) + 1)
 	else:
 		lastTrade['Time'] = recordTime
@@ -194,18 +194,21 @@ async def collectData(symbol):
 						checkWriteThreshold(trade['product_id'], writeClient, trades, commonAttributes, mysns)
 		except websockets.ConnectionClosedOK as e:
 			traceback.print_exc()
-			publishAndPrintError(mysns, e, "Websocket ConnectionClosedOK")
+			publishAndPrintError(mysns, e, "Websocket ConnectionClosedOK", symbol)
 		except websockets.ConnectionClosedError as e:
 			traceback.print_exc()
-			publishAndPrintError(mysns, e, "Websocket ConnectionClosedError")
+			publishAndPrintError(mysns, e, "Websocket ConnectionClosedError", symbol)
 		except Exception as e:
 			traceback.print_exc()
-			publishAndPrintError(mysns, e, "Other Websocket")
+			print(trade)
+			print(lastTrade)
+			print(response)
+			publishAndPrintError(mysns, e, "Other Websocket", symbol)
 			break
 
 # If we have to reconnect after a websocket exception, get any trades we might have missed
 def handleGap(response, trades, lastTrade, writeClient, commonAttributes, mysns):
-	if int(response['trade_id']) != int(lastTrade['tradeId']) + 1:
+	if int(response['trade_id']) > int(lastTrade['tradeId']) + 1:
 		endId = int(response['trade_id'])
 		endDate = dateutil.parser.isoparse(response['time'])
 		endTime = int(datetime.datetime.timestamp(endDate)) + 1
@@ -228,7 +231,7 @@ def handleGap(response, trades, lastTrade, writeClient, commonAttributes, mysns)
 			prevLastTradeId = lastTrade['tradeId']
 			startTime = int(lastTrade['Time']) // 1000000
 		if int(response['trade_id']) != int(lastTrade['tradeId']) + 1:
-			publishAndPrintError(mysns, RuntimeError("Only closed gap up to " + lastTrade['tradeId'] + ", but current trade ID is " + response['trade_id']), "Requests")
+			publishAndPrintError(mysns, RuntimeError("Only closed gap up to " + lastTrade['tradeId'] + ", but current trade ID is " + response['trade_id']), "Requests", symbol)
 
 def getGap(symbol, endId, endTime, trades, startTime, lastTrade, writeClient, commonAttributes, mysns):
 	url = "https://api.coinbase.com/api/v3/brokerage/products/%s/ticker" % (symbol)
@@ -239,11 +242,12 @@ def getGap(symbol, endId, endTime, trades, startTime, lastTrade, writeClient, co
 	startDate = datetime.datetime.fromtimestamp(startTime).strftime('%Y-%m-%dT%H:%M:%S')
 	endDate = datetime.datetime.fromtimestamp(endTime).strftime('%Y-%m-%dT%H:%M:%S')
 	try:
-		print("Sending HTTP request for %s trades from %s to %s" % (symbol, startDate, endDate))
+		print("Sending HTTP request for %s trades from %s to %s (lastTradeId: %s)" % (symbol, startDate, endDate, lastTrade['tradeId']))
 		response = requests.get(url, params=params, headers=headers)
 		response.raise_for_status()
 		responseTrades = response.json()['trades']
 		cleanTrades(responseTrades)
+		print("HTTP response contains %d trades from %s to %s (%s - %s)" % (len(responseTrades), responseTrades[0]['trade_id'], responseTrades[-1]['trade_id'], responseTrades[0]['time'], responseTrades[-1]['time']))
 		# print(responseTrades)
 
 		'''
@@ -287,10 +291,10 @@ def getGap(symbol, endId, endTime, trades, startTime, lastTrade, writeClient, co
 				updateRecordTime(record, lastTrade, trades, symbol)
 				checkWriteThreshold(symbol, writeClient, trades, commonAttributes, mysns)
 			else:
-				publishAndPrintError(mysns, LookupError("Trade ID " + str(tradeId) + " not found"), "Requests")
+				publishAndPrintError(mysns, LookupError("Trade ID " + str(tradeId) + " not found"), "Requests", symbol)
 			tradeId += 1
 	except Exception as e:
-		publishAndPrintError(mysns, e, "Requests")
+		publishAndPrintError(mysns, e, "Requests", symbol)
 
 def cleanTrades(trades):
 	for idx, _ in enumerate(trades):

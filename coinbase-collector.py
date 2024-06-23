@@ -252,7 +252,7 @@ def handleGap(response, trades, lastTrade, windows, writeClient, commonAttribute
 		while True:
 			# Check old last trade time and increase the gap if it's still the same
 			# Use a three-second-minimum window since the max observed trades in a one-second window was 260 on Feb 28 2024
-			windowOffset = max(1000 // max(1, computeAverage(windows)) - 5, 3)
+			windowOffset = max(MAX_REST_API_TRADES // max(1, computeAverage(windows)) - 5, 3)
 			while not getGap(response['product_id'], endId, min(startTime + windowOffset + endTimeOffset, endTime), trades, startTime, lastTrade, windows, writeClient, commonAttributes, mysns):
 				# Rate limit is 30 requests per second
 				time.sleep(1 / 30)

@@ -11,6 +11,7 @@ import datetime
 import argparse
 from coinbase import jwt_generator
 from functools import cmp_to_key
+from urllib.error import HTTPError
 
 DATABASE_NAME = "coinbase-websocket-data"
 
@@ -27,6 +28,8 @@ REGION_NAME = "us-east-2"
 NUM_RECORDS = 30
 
 MAX_REST_API_TRADES = 1000
+
+SLIDING_WINDOW_SIZE = 5
 
 def publishAndPrintError(mysns, error, subject, symbol):
 	errorMessage = repr(error) + " encountered for " + symbol + " at " + str(time.strftime("%H:%M:%S", time.localtime()))
@@ -54,7 +57,7 @@ def prepareRecord(response):
 	isBuyerMaker = makerSide == 'BUY'
 
 	formattedDate = dateutil.parser.isoparse(response['time'])
-	microseconds = int(datetime.datetime.timestamp(formattedDate) * 1000000)
+	microseconds = round(datetime.datetime.timestamp(formattedDate) * 1000000)
 
 	try:
 		# Coinbase sometimes sends trades with non-integer IDs
@@ -103,7 +106,7 @@ def writeRecords(symbol, writeClient, records, commonAttributes, mysns):
 		print("Writing %d %s records (%s - %s) at %s" % (len(records), symbol, tradeIds[0], tradeIds[1], str(datetime.datetime.now())))
 		gap = int(tradeIds[1]) - int(tradeIds[0])
 		if gap != 29:
-			print("Only writing %d records" % (gap + 1))
+			print("Writing %d records instead of 30" % (gap + 1))
 		result = writeClient.write_records(DatabaseName=DATABASE_NAME, TableName=symbol, CommonAttributes=commonAttributes, Records=records)
 		status = result['ResponseMetadata']['HTTPStatusCode']
 		print("Processed %d %s records (%s - %s). WriteRecords HTTPStatusCode: %s" % (len(records), commonAttributes['Dimensions'][0]['Value'], tradeIds[0], tradeIds[1], status))
@@ -144,6 +147,9 @@ async def collectData(symbol):
 	headers = {"Sec-WebSocket-Extensions": "permessage-deflate"}
 	trades = []
 	lastTrade = {'Time': '0', 'offset': '0', 'tradeId': '0'}
+
+	# Rolling window of the number of trades in each of the last 5 seconds
+	windows = {"startTime": "", "windows": []}
 	handleFirstGap = False
 
 	commonAttributes = {
@@ -187,11 +193,13 @@ async def collectData(symbol):
 					responseTrades = response['events'][0]['trades']
 					cleanTrades(responseTrades)
 					for trade in responseTrades:
-						record = prepareRecord(trade)
-						if handleFirstGap or lastTrade['tradeId'] != '0':
-							handleGap(trade, trades, lastTrade, writeClient, commonAttributes, mysns)
-						updateRecordTime(record, lastTrade, trades, trade['product_id'])
-						checkWriteThreshold(trade['product_id'], writeClient, trades, commonAttributes, mysns)
+						if lastTrade['tradeId'] == '0' or int(trade['trade_id']) > int(lastTrade['tradeId']):
+							record = prepareRecord(trade)
+							if handleFirstGap or lastTrade['tradeId'] != '0':
+								handleGap(trade, trades, lastTrade, windows, writeClient, commonAttributes, mysns)
+							updateRecordTime(record, lastTrade, trades, trade['product_id'])
+							adjustWindow(record, windows)
+							checkWriteThreshold(trade['product_id'], writeClient, trades, commonAttributes, mysns)
 		except websockets.ConnectionClosedOK as e:
 			traceback.print_exc()
 			publishAndPrintError(mysns, e, "Websocket ConnectionClosedOK", symbol)
@@ -206,8 +214,31 @@ async def collectData(symbol):
 			publishAndPrintError(mysns, e, "Other Websocket", symbol)
 			break
 
+def adjustWindow(record, windows):
+	recordTime = str(int(record['Time']) // 1000000)
+	if windows['startTime'] == '':
+		windows['startTime'] = recordTime
+		windows['windows'].append(1)
+	else:
+		gap = int(recordTime) - int(windows['startTime']) - len(windows['windows'])
+		assert(gap >= -1)
+		if gap >= 0:
+			windows['windows'] += gap * [0]
+			windows['windows'].append(1)
+			if len(windows['windows']) - SLIDING_WINDOW_SIZE > 0:
+				windows['windows'] = windows['windows'][len(windows['windows']) - SLIDING_WINDOW_SIZE:]
+			windows['startTime'] = str(int(recordTime) - len(windows['windows']) + 1)
+		else:
+			windows['windows'][-1] += 1
+
+def computeAverage(windows):
+	if len(windows['windows']) == 0:
+		return 0
+	else:
+		return sum(windows['windows']) // len(windows['windows'])
+
 # If we have to reconnect after a websocket exception, get any trades we might have missed
-def handleGap(response, trades, lastTrade, writeClient, commonAttributes, mysns):
+def handleGap(response, trades, lastTrade, windows, writeClient, commonAttributes, mysns):
 	if int(response['trade_id']) > int(lastTrade['tradeId']) + 1:
 		endId = int(response['trade_id'])
 		endDate = dateutil.parser.isoparse(response['time'])
@@ -217,12 +248,15 @@ def handleGap(response, trades, lastTrade, writeClient, commonAttributes, mysns)
 		startDate = datetime.datetime.fromtimestamp(startTime).strftime('%Y-%m-%dT%H:%M:%S') + '.' + startMicros.zfill(6)
 		print("Gap found: %s - %s (%s - %s)" % (lastTrade['tradeId'], response['trade_id'], startDate, response['time']))
 		endTimeOffset = 0
-		prevLastTradeId = ""
+		prevLastTradeId = lastTrade['tradeId']
 		while True:
 			# Check old last trade time and increase the gap if it's still the same
-			# Use a three-second window since the max observed trades in a one-second window was 260 on Feb 28 2024
-			getGap(response['product_id'], endId, min(startTime + 3 + endTimeOffset, endTime), trades, startTime, lastTrade, writeClient, commonAttributes, mysns)
-			if startTime + 3 + endTimeOffset >= endTime or int(response['trade_id']) == int(lastTrade['tradeId']) + 1:
+			# Use a three-second-minimum window since the max observed trades in a one-second window was 260 on Feb 28 2024
+			windowOffset = max(1000 // max(1, computeAverage(windows)) - 5, 3)
+			while not getGap(response['product_id'], endId, min(startTime + windowOffset + endTimeOffset, endTime), trades, startTime, lastTrade, windows, writeClient, commonAttributes, mysns):
+				# Rate limit is 30 requests per second
+				time.sleep(1 / 30)
+			if startTime + windowOffset + endTimeOffset >= endTime or int(response['trade_id']) == int(lastTrade['tradeId']) + 1:
 				break
 			if prevLastTradeId == lastTrade['tradeId']:
 				endTimeOffset += 10
@@ -233,7 +267,7 @@ def handleGap(response, trades, lastTrade, writeClient, commonAttributes, mysns)
 		if int(response['trade_id']) != int(lastTrade['tradeId']) + 1:
 			publishAndPrintError(mysns, RuntimeError("Only closed gap up to " + lastTrade['tradeId'] + ", but current trade ID is " + response['trade_id']), "Requests", symbol)
 
-def getGap(symbol, endId, endTime, trades, startTime, lastTrade, writeClient, commonAttributes, mysns):
+def getGap(symbol, endId, endTime, trades, startTime, lastTrade, windows, writeClient, commonAttributes, mysns):
 	url = "https://api.coinbase.com/api/v3/brokerage/products/%s/ticker" % (symbol)
 	params = {"limit": MAX_REST_API_TRADES, "start": str(startTime), "end": str(endTime)}
 	jwt_uri = jwt_generator.format_jwt_uri("GET", "/api/v3/brokerage/products/%s/ticker" % (symbol))
@@ -289,12 +323,18 @@ def getGap(symbol, endId, endTime, trades, startTime, lastTrade, writeClient, co
 			if (idx != -1):
 				record = prepareRecord(responseTrades[idx])
 				updateRecordTime(record, lastTrade, trades, symbol)
+				adjustWindow(record, windows)
 				checkWriteThreshold(symbol, writeClient, trades, commonAttributes, mysns)
 			else:
 				publishAndPrintError(mysns, LookupError("Trade ID " + str(tradeId) + " not found"), "Requests", symbol)
 			tradeId += 1
+		return True
+	except HTTPError as e:
+		publishAndPrintError(mysns, e, "Requests", symbol)
+		return not e.code == 429
 	except Exception as e:
 		publishAndPrintError(mysns, e, "Requests", symbol)
+		return True
 
 def cleanTrades(trades):
 	for idx, _ in enumerate(trades):

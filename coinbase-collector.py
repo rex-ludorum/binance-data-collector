@@ -258,6 +258,7 @@ def computeAverage(windows):
 # If we have to reconnect after a websocket exception, get any trades we might have missed
 def handleGap(response, trades, lastTrade, windows, writeClient, commonAttributes, mysns):
 	if int(response['trade_id']) > int(lastTrade['tradeId']) + 1:
+		time.sleep(0.5)
 		endId = int(response['trade_id'])
 		endDate = dateutil.parser.isoparse(response['time'])
 		endTime = int(datetime.datetime.timestamp(endDate)) + 1
@@ -276,6 +277,7 @@ def handleGap(response, trades, lastTrade, windows, writeClient, commonAttribute
 			# Actually, see the test commands for a one-second window with more than 1000 trades
 			if max(windows["windows"]) < MAX_WINDOW_SIZE:
 				windowOffset = max(MAX_REST_API_TRADES // max(1, computeAverage(windows)), 1)
+				windowOffset = min(windowOffset, 30)
 			else:
 				windowOffset = 1
 			while not getGap(response['product_id'], endId, min(startTime + windowOffset, endTime), trades, startTime, lastTrade, missedTrades, log, False, windows, writeClient, commonAttributes, mysns):
@@ -287,6 +289,7 @@ def handleGap(response, trades, lastTrade, windows, writeClient, commonAttribute
 				startTime = startTime + windowOffset
 				# endTimeOffset += 10
 			else:
+				# Might be able to just use the previous endTime as the new startTime like in the above case
 				startTime = int(lastTrade['Time']) // 1000000
 				# endTimeOffset = 0
 			prevLastTradeId = lastTrade['tradeId']
@@ -364,7 +367,7 @@ def getGap(symbol, endId, endTime, trades, startTime, lastTrade, missedTrades, l
 		tradeId = int(lastTrade['tradeId'])
 		if tradeId >= int(responseTrades[-1]['trade_id']):
 			if not retried:
-				time.sleep(1)
+				time.sleep(0.5)
 				logMsg = "Retrying - tradeId %s is geq %s" % (lastTrade['tradeId'], responseTrades[-1]['trade_id'])
 				print(logMsg)
 				log.append(logMsg)
@@ -393,12 +396,13 @@ def getGap(symbol, endId, endTime, trades, startTime, lastTrade, missedTrades, l
 				updateRecordTime(record, lastTrade, trades, symbol)
 				adjustWindow(record, windows)
 				checkWriteThreshold(symbol, writeClient, trades, commonAttributes, mysns)
+				# How do we know if we got all the trades in this given window or if there are still missing ones after the last?
 				if (idx == len(responseTrades) - 1):
 					break;
 			else:
 				if not retried:
-					time.sleep(1)
-					logMsg = "Retrying - tradeId %s was not found" % (lastTrade['tradeId'])
+					time.sleep(0.5)
+					logMsg = "Retrying - tradeId %s was not found" % (tradeId)
 					print(logMsg)
 					log.append(logMsg)
 					return getGap(symbol, endId, endTime, trades, startTime, lastTrade, missedTrades, log, True, windows, writeClient, commonAttributes, mysns)
@@ -464,7 +468,7 @@ def getRanges(trades):
 
 def getMissedRanges(ids):
 	if len(ids) == 1:
-		return [ids[0]]
+		return [str(ids[0])]
 	if not ids:
 		return []
 

@@ -376,6 +376,12 @@ def getGap(symbol, endId, endTime, trades, startTime, lastTrade, missedTrades, l
 			return True
 
 		cleanTrades(responseTrades)
+		if not responseTrades:
+			logMsg = "HTTP response contains 0 trades (after cleaning)"
+			print(logMsg)
+			log.append(logMsg)
+			return True
+
 		logMsg = "HTTP response contains %d trades (%s) (%s - %s)" % (len(responseTrades), ", ".join(getRanges(responseTrades)), responseTrades[0]['time'], responseTrades[-1]['time'])
 		print(logMsg)
 		log.append(logMsg)

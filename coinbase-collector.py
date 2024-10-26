@@ -216,7 +216,7 @@ def sendTrade(data):
 				traceback.print_exc()
 				publishAndPrintError(e, "Other Socket 2")
 
-async def collectData(symbol):
+async def collectData():
 	url = "wss://advanced-trade-ws.coinbase.com"
 	headers = {"Sec-WebSocket-Extensions": "permessage-deflate"}
 	trades = []
@@ -325,7 +325,7 @@ def handleGap(response, trades, lastTrade, windows):
 				windowOffset = min(windowOffset, 30)
 			else:
 				windowOffset = 1
-			while not getGap(response['product_id'], endId, min(startTime + windowOffset, endTime), trades, startTime, lastTrade, missedTrades, log, False, windows):
+			while not getGap(endId, min(startTime + windowOffset, endTime), trades, startTime, lastTrade, missedTrades, log, False, windows):
 				# Rate limit is 30 requests per second
 				time.sleep(1 / 30)
 			if startTime + windowOffset >= endTime or int(response['trade_id']) == int(lastTrade['tradeId']) + 1:
@@ -354,7 +354,7 @@ def handleGap(response, trades, lastTrade, windows):
 			errMsg += "\n".join(log)
 			publishAndPrintError(RuntimeError(errMsg), "Requests")
 
-def getGap(symbol, endId, endTime, trades, startTime, lastTrade, missedTrades, log, retried, windows):
+def getGap(endId, endTime, trades, startTime, lastTrade, missedTrades, log, retried, windows):
 	url = "https://api.coinbase.com/api/v3/brokerage/products/%s/ticker" % (symbol)
 	params = {"limit": MAX_REST_API_TRADES, "start": str(startTime), "end": str(endTime)}
 	jwt_uri = jwt_generator.format_jwt_uri("GET", "/api/v3/brokerage/products/%s/ticker" % (symbol))
@@ -422,7 +422,7 @@ def getGap(symbol, endId, endTime, trades, startTime, lastTrade, missedTrades, l
 				logMsg = "Retrying - tradeId %s is geq %s" % (lastTrade['tradeId'], responseTrades[-1]['trade_id'])
 				print(logMsg)
 				log.append(logMsg)
-				return getGap(symbol, endId, endTime, trades, startTime, lastTrade, missedTrades, log, True, windows)
+				return getGap(endId, endTime, trades, startTime, lastTrade, missedTrades, log, True, windows)
 			else:
 				return True
 
@@ -458,7 +458,7 @@ def getGap(symbol, endId, endTime, trades, startTime, lastTrade, missedTrades, l
 					logMsg = "Retrying - tradeId %s was not found" % (tradeId)
 					print(logMsg)
 					log.append(logMsg)
-					return getGap(symbol, endId, endTime, trades, startTime, lastTrade, missedTrades, log, True, windows)
+					return getGap(endId, endTime, trades, startTime, lastTrade, missedTrades, log, True, windows)
 				else:
 					missedTrades.append(tradeId)
 				# publishAndPrintError(LookupError("Trade ID " + str(tradeId) + " not found"), "Requests")
@@ -567,7 +567,7 @@ sock.listen(1)
 connValid = False
 conn = None
 
-asyncio.run(collectData(symbol))
+asyncio.run(collectData())
 
 # Test commands for handling gaps
 '''

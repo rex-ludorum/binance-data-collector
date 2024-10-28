@@ -54,13 +54,13 @@ def assessTrade(trade):
 			entry = [True, trade['price'], trade['time'], trade['tradeId']]
 			data = 'Long entry at %f, target = %f, stop loss = %f' % (trade['price'], trade['price'] * (1 + TARGET / 100), trade['price'] * (1 - STOP_LOSS / 100))
 			print(data)
-			requests.post("https://ntfy.sh", data=data)
+			requests.post("https://ntfy.sh/" + NTFY_TOPIC, data=data)
 		elif sellVol >= sellVolPercentile:
 			maxProfit = trade['price']
 			entry = [False, trade['price'], trade['time'], trade['tradeId']]
 			data = 'Short entry at %f, target = %f, stop loss = %f' % (trade['price'], trade['price'] * (1 - TARGET / 100), trade['price'] * (1 + STOP_LOSS / 100))
 			print(data)
-			requests.post("https://ntfy.sh", data=data)
+			requests.post("https://ntfy.sh/" + NTFY_TOPIC, data=data)
 	else:
 		if entry[0]:
 			maxProfit = max(maxProfit, trade['price'])

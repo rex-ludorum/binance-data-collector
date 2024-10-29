@@ -34,6 +34,9 @@ MAX_REST_API_TRADES = 1000
 SLIDING_WINDOW_SIZE = 5
 MAX_WINDOW_SIZE = 200
 
+BTC_PORT = 12345
+ETH_PORT = 12346
+
 def publishAndPrintError(error, subject):
 	errorMessage = repr(error) + " encountered for " + symbol + " at " + str(time.strftime("%H:%M:%S", time.localtime()))
 	print(errorMessage)
@@ -65,9 +68,6 @@ def prepareRecord(response):
 	formattedDate = dateutil.parser.isoparse(response['time'])
 	microseconds = round(datetime.datetime.timestamp(formattedDate) * 1000000)
 
-	# try:
-		# Coinbase sometimes sends trades with non-integer IDs
-		# Skip the trade if that's the case
 	tradeId = int(response['trade_id'])
 	record = {
 		'Time': str(microseconds),
@@ -79,11 +79,6 @@ def prepareRecord(response):
 		]
 	}
 	return record
-	'''
-	except ValueError:
-		print("Unknown trade_id for " + json.dumps(response))
-		return {}
-	'''
 
 def prepareMeasure(name, value, measureType):
 	measure = {
@@ -103,30 +98,12 @@ def getTradeIds(records):
 				tradeIds.append(int(measure['Value']))
 				break
 
-	'''
-	tradeIds = []
-	firstTradeMeasureValues = records[0]['MeasureValues']
-	for measure in firstTradeMeasureValues:
-		if measure['Name'] == 'tradeId':
-			tradeIds.append(measure['Value'])
-			break
-	lastTradeMeasureValues = records[-1]['MeasureValues']
-	for measure in lastTradeMeasureValues:
-		if measure['Name'] == 'tradeId':
-			tradeIds.append(measure['Value'])
-			break
-	'''
 	return tradeIds
 
 def writeRecords(records):
 	try:
 		tradeIds = getTradeIds(records)
 		print("Writing %d %s records (%s) at %s" % (len(records), symbol, ", ".join(getMissedRanges(tradeIds)), str(datetime.datetime.now())))
-		'''
-		gap = int(tradeIds[1]) - int(tradeIds[0])
-		if gap != 29:
-			print("Writing %d records instead of 30" % (gap + 1))
-		'''
 		result = writeClient.write_records(DatabaseName=DATABASE_NAME, TableName=symbol, CommonAttributes=commonAttributes, Records=records)
 		status = result['ResponseMetadata']['HTTPStatusCode']
 		print("Processed %d %s records (%s). WriteRecords HTTPStatusCode: %s" % (len(records), commonAttributes['Dimensions'][0]['Value'], ", ".join(getMissedRanges(tradeIds)), status))
@@ -167,10 +144,6 @@ def prepareTrade(trade):
 
 	makerSide = trade['side']
 	if (makerSide != 'BUY' and makerSide != 'SELL'):
-		'''
-		print("Unknown maker side for " + json.dumps(response))
-		return {}
-		'''
 		raise ValueError("Unknown maker side for " + json.dumps(trade))
 	cleanedTrade['isBuyerMaker'] = makerSide == 'BUY'
 
@@ -332,11 +305,9 @@ def handleGap(response, trades, lastTrade, windows):
 				break
 			if prevLastTradeId == lastTrade['tradeId']:
 				startTime = startTime + windowOffset
-				# endTimeOffset += 10
 			else:
 				# Might be able to just use the previous endTime as the new startTime like in the above case
 				startTime = int(lastTrade['Time']) // 1000000
-				# endTimeOffset = 0
 			prevLastTradeId = lastTrade['tradeId']
 
 		if not missedTrades:
@@ -426,21 +397,8 @@ def getGap(endId, endTime, trades, startTime, lastTrade, missedTrades, log, retr
 			else:
 				return True
 
-		'''
-		# Fringe case for when the lastTrade is the very last trade in the response
-		idx = next((i for i, x in enumerate(responseTrades) if int(x['trade_id']) == tradeId), -1)
-		if (idx == len(responseTrades) - 1):
-			return True
-		'''
-
 		tradeId = int(lastTrade['tradeId']) + 1
-		# idx = next((i for i, x in enumerate(responseTrades) if int(x['trade_id']) == tradeId), -1)
-		# if (idx == -1):
-			# raise LookupError("Last trade not found for ID " + str(tradeId))
-		# tradeId += 1
 		while (tradeId < endId):
-			# if (idx == len(responseTrades) - 1):
-				# break;
 			idx = next((i for i, x in enumerate(responseTrades) if int(x['trade_id']) == tradeId), -1)
 			if (idx != -1):
 				record = prepareRecord(responseTrades[idx])
@@ -461,7 +419,6 @@ def getGap(endId, endTime, trades, startTime, lastTrade, missedTrades, log, retr
 					return getGap(endId, endTime, trades, startTime, lastTrade, missedTrades, log, True, windows)
 				else:
 					missedTrades.append(tradeId)
-				# publishAndPrintError(LookupError("Trade ID " + str(tradeId) + " not found"), "Requests")
 			tradeId += 1
 		return True
 	except HTTPError as e:
@@ -483,16 +440,6 @@ def cleanTrades(trades):
 			except ValueError:
 				trades.pop(idx)
 	trades.sort(key=cmp_to_key(lambda item1, item2: int(item1['trade_id']) - int(item2['trade_id'])))
-	'''
-	first = True
-	for i, e in reversed(list(enumerate(trades))):
-		if first:
-			first = False
-			continue
-		if int(e['trade_id']) != int(trades[i + 1]['trade_id']) - 1:
-			del(trades[:i+1])
-			break
-	'''
 
 def getRanges(trades):
 	if len(trades) == 1:
@@ -562,7 +509,7 @@ writeClient = boto3.client('timestream-write', region_name=REGION_NAME, aws_acce
 mysns = boto3.client("sns", region_name=REGION_NAME, aws_access_key_id=ACCESS_KEY, aws_secret_access_key=AWS_SECRET_ACCESS_KEY)
 
 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM | socket.SOCK_NONBLOCK)
-sock.bind(('localhost', 12345))
+sock.bind(('localhost', BTC_PORT if symbol == 'BTC-USD' else ETH_PORT))
 sock.listen(1)
 connValid = False
 conn = None
@@ -570,20 +517,6 @@ conn = None
 asyncio.run(collectData())
 
 # Test commands for handling gaps
-'''
-commonAttributes = {
-	'Dimensions': [
-		{'Name': 'symbol', 'Value': symbol}
-	],
-	'MeasureName': 'price',
-	'MeasureValueType': 'MULTI',
-	'TimeUnit': 'MICROSECONDS'
-}
-'''
-
-# writeClient = boto3.client('timestream-write', region_name=REGION_NAME, aws_access_key_id=ACCESS_KEY, aws_secret_access_key=AWS_SECRET_ACCESS_KEY)
-
-# mysns = boto3.client("sns", region_name=REGION_NAME, aws_access_key_id=ACCESS_KEY, aws_secret_access_key=AWS_SECRET_ACCESS_KEY)
 # handleGap({'trade_id': '999999999', 'time': '2024-06-02T00:00:00.000000Z', 'product_id': 'BTC-USD'}, [], {'Time': '1617216665966502', 'offset': '0', 'tradeId': '151436694'}, writeClient, commonAttributes, mysns)
 # handleGap({'trade_id': '151436698', 'time': '2024-06-02T00:00:00.000000Z', 'product_id': 'BTC-USD'}, [], {'Time': '1617216665966502', 'offset': '0', 'tradeId': '151436694'}, {}, {}, {})
 

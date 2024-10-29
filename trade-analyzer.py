@@ -1,3 +1,5 @@
+import argparse
+import datetime
 import json
 import os
 import requests
@@ -13,6 +15,9 @@ WINDOW = FIFTEEN_MIN_IN_MICROSECONDS * (WINDOW_IDX + 1)
 BUY_PERCENTILE_IDX = 1
 SELL_PERCENTILE_IDX = 0
 NTFY_TOPIC = os.environ.get("NTFY_TOPIC")
+
+BTC_PORT = 12345
+ETH_PORT = 12346
 
 # 60th percentile to 95th percentile in increments of 5 percentiles
 buyVolPercentiles = []
@@ -52,13 +57,13 @@ def assessTrade(trade):
 		if buyVol >= buyVolPercentile:
 			maxProfit = trade['price']
 			entry = [True, trade['price'], trade['time'], trade['tradeId']]
-			data = 'Long entry at %f, target = %f, stop loss = %f' % (trade['price'], trade['price'] * (1 + TARGET / 100), trade['price'] * (1 - STOP_LOSS / 100))
+			data = '%s: Long entry at %f, target = %f, stop loss = %f (%s)' % (symbol, trade['price'], trade['price'] * (1 + TARGET / 100), trade['price'] * (1 - STOP_LOSS / 100), str(datetime.datetime.now()))
 			print(data)
 			requests.post("https://ntfy.sh/" + NTFY_TOPIC, data=data)
 		elif sellVol >= sellVolPercentile:
 			maxProfit = trade['price']
 			entry = [False, trade['price'], trade['time'], trade['tradeId']]
-			data = 'Short entry at %f, target = %f, stop loss = %f' % (trade['price'], trade['price'] * (1 - TARGET / 100), trade['price'] * (1 + STOP_LOSS / 100))
+			data = '%s: Short entry at %f, target = %f, stop loss = %f (%s)' % (symbol, trade['price'], trade['price'] * (1 - TARGET / 100), trade['price'] * (1 + STOP_LOSS / 100), str(datetime.datetime.now()))
 			print(data)
 			requests.post("https://ntfy.sh/" + NTFY_TOPIC, data=data)
 	else:
@@ -68,7 +73,7 @@ def assessTrade(trade):
 			if profitMargin >= TARGET / 100:
 				# startingCapitals[j][i] *= (1 + profitMargin)
 				entry = []
-				data = 'Take profit at %f' % (maxProfit)
+				data = '%s: Take profit at %f (%s)' % (symbol, maxProfit, str(datetime.datetime.now()))
 				print(data)
 				requests.post("https://ntfy.sh/" + NTFY_TOPIC, data=data)
 				# tradeLogs[j][i].append("Profit: " + str(price) + " " + trade[1] + "T" + trade[2] + " " + trade[0])
@@ -79,7 +84,7 @@ def assessTrade(trade):
 			elif trade['price'] <= (1 - STOP_LOSS / 100) * entry[1]:
 				# startingCapitals[j][i] *= 1 - stopLoss / 100
 				entry = []
-				data = 'Take loss at %f' % (trade['price'])
+				data = '%s: Take loss at %f (%s)' % (symbol, trade['price'], str(datetime.datetime.now()))
 				print(data)
 				requests.post("https://ntfy.sh/" + NTFY_TOPIC, data=data)
 				# tradeLogs[j][i].append("Loss: " + str(price) + " " + trade[1] + "T" + trade[2] + " " + trade[0])
@@ -93,7 +98,7 @@ def assessTrade(trade):
 			if profitMargin >= TARGET / 100:
 				# startingCapitals[j][i] *= (1 + profitMargin)
 				entry = []
-				data = 'Take profit at %f' % (maxProfit)
+				data = '%s: Take profit at %f (%s)' % (symbol, maxProfit, str(datetime.datetime.now()))
 				print(data)
 				requests.post("https://ntfy.sh/" + NTFY_TOPIC, data=data)
 				# tradeLogs[j][i].append("Profit: " + str(price) + " " + trade[1] + "T" + trade[2] + " " + trade[0])
@@ -104,7 +109,7 @@ def assessTrade(trade):
 			elif trade['price'] >= (1 + STOP_LOSS / 100) * entry[1]:
 				# startingCapitals[j][i] *= 1 - stopLoss / 100
 				entry = []
-				data = 'Take loss at %f' % (trade['price'])
+				data = '%s: Take loss at %f (%s)' % (symbol, trade['price'], str(datetime.datetime.now()))
 				print(data)
 				requests.post("https://ntfy.sh/" + NTFY_TOPIC, data=data)
 				# tradeLogs[j][i].append("Loss: " + str(price) + " " + trade[1] + "T" + trade[2] + " " + trade[0])
@@ -116,6 +121,7 @@ def assessTrade(trade):
 def processTrade(trade):
 	global timeWindow, buyVol, sellVol
 
+	# print("before: %f, %f" % (buyVol, sellVol))
 	if timeWindow == 0:
 		timeWindow = trade['time']
 	elif trade['time'] - timeWindow > WINDOW:
@@ -135,6 +141,7 @@ def processTrade(trade):
 	else:
 		sellVol += trade['size']
 	trades.append(trade)
+	# print("after: %f, %f" % (buyVol, sellVol))
 	assessTrade(trade)
 
 def processMessageIfPossible(buffer):
@@ -177,12 +184,17 @@ def analyzeTrades():
 		else:
 			try:
 				sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-				sock.connect(('localhost', 12345))
+				sock.connect(('localhost', BTC_PORT if symbol == "BTC-USD" else ETH_PORT))
 				sockValid = True
 			# except ConnectionRefusedError as e:
 				# print(e)
 			except Exception as e:
 				sock.close()
 				traceback.print_exc()
+
+parser = argparse.ArgumentParser(description='Analyze trading data from a socket and send trading signals')
+parser.add_argument('symbol', help='the trading pair to anaylze', choices=['BTC-USD', 'ETH-USD'])
+args = parser.parse_args()
+symbol = vars(args)['symbol']
 
 analyzeTrades()

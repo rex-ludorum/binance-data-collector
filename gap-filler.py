@@ -198,7 +198,7 @@ def handleGap(startTime, startId, endTime, endId):
 
 			if retVal == RetVal.GAP_EXCEEDED:
 				windowOffset = 1
-			elif str(prevLastTradeId) == lastTrade['tradeId']:
+			elif str(prevLastTradeId) == lastTrade['tradeId'] or retVal == RetVal.SUCCESS:
 				startTime = startTime + windowOffset
 				if windows['windows'] and max(windows["windows"]) < MAX_WINDOW_SIZE:
 					windowOffset = max(MAX_REST_API_TRADES // max(1, computeAverage(windows)), 1)
@@ -270,7 +270,11 @@ def getGap(endId, endTime, trades, startTime, lastTrade, missedTrades, log, wind
 		if idx != -1:
 			formattedDate = dateutil.parser.isoparse(responseTrades[idx]['time'])
 			seconds = int(datetime.datetime.timestamp(formattedDate))
-			if len(responseTrades) > ONE_SECOND_MAX_TRADES and seconds > startTime:
+			if len(responseTrades) > ONE_SECOND_MAX_TRADES and endTime - startTime > 1:
+				lastTradeTime = datetime.datetime.fromtimestamp(int(lastTrade['Time']) / 1000000).strftime('%Y-%m-%dT%H:%M:%S')
+				logMsg = "Moving gap back, lastTrade has timestamp %s.%s" % (lastTradeTime, str((int(lastTrade['Time']) % 1000000)).zfill(6))
+				print(logMsg)
+				log.append(logMsg)
 				return RetVal.GAP_EXCEEDED
 
 		'''

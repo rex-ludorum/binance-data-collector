@@ -162,6 +162,16 @@ def computeAverage(windows):
 	else:
 		return sum(windows['windows']) // len(windows['windows'])
 
+def computeOffset(windows):
+	if not windows['windows']:
+		return 30
+	elif max(windows["windows"]) < MAX_WINDOW_SIZE:
+		windowOffset = max(MAX_REST_API_TRADES // max(1, computeAverage(windows)), 1)
+		windowOffset = min(windowOffset, 30)
+		return windowOffset
+	else:
+		return 1
+
 # If we have to reconnect after a websocket exception, get any trades we might have missed
 def handleGap(startTime, startId, endTime, endId):
 	if int(endId) > int(startId) + 1:
@@ -180,11 +190,7 @@ def handleGap(startTime, startId, endTime, endId):
 		# Use a three-second-minimum window since the max observed trades in a one-second window was 260 on Feb 28 2024
 		# Actually, see the test commands for a one-second window with more than 1000 trades
 		windows = {'startTime': '', 'windows': []}
-		if windows['windows'] and max(windows["windows"]) < MAX_WINDOW_SIZE:
-			windowOffset = max(MAX_REST_API_TRADES // max(1, computeAverage(windows)), 1)
-			windowOffset = min(windowOffset, 30)
-		else:
-			windowOffset = 30
+		windowOffset = computeOffset(windows)
 
 		while True:
 			while (retVal := getGap(endId, min(startTime + windowOffset, endTime), trades, startTime, lastTrade, missedTrades, log, windows)) == RetVal.WAIT:
@@ -200,19 +206,11 @@ def handleGap(startTime, startId, endTime, endId):
 				windowOffset = 1
 			elif str(prevLastTradeId) == lastTrade['tradeId'] or retVal == RetVal.SUCCESS:
 				startTime = startTime + windowOffset
-				if windows['windows'] and max(windows["windows"]) < MAX_WINDOW_SIZE:
-					windowOffset = max(MAX_REST_API_TRADES // max(1, computeAverage(windows)), 1)
-					windowOffset = min(windowOffset, 30)
-				else:
-					windowOffset = 30
+				windowOffset = computeOffset(windows)
 			else:
 				# Might be able to just use the previous endTime as the new startTime like in the above case
 				startTime = int(lastTrade['Time']) // 1000000
-				if windows['windows'] and max(windows["windows"]) < MAX_WINDOW_SIZE:
-					windowOffset = max(MAX_REST_API_TRADES // max(1, computeAverage(windows)), 1)
-					windowOffset = min(windowOffset, 30)
-				else:
-					windowOffset = 30
+				windowOffset = computeOffset(windows)
 			prevLastTradeId = lastTrade['tradeId']
 
 		if not missedTrades:
@@ -271,7 +269,7 @@ def getGap(endId, endTime, trades, startTime, lastTrade, missedTrades, log, wind
 			formattedDate = dateutil.parser.isoparse(responseTrades[idx]['time'])
 			seconds = int(datetime.datetime.timestamp(formattedDate))
 			if len(responseTrades) > ONE_SECOND_MAX_TRADES and endTime - startTime > 1:
-				lastTradeTime = datetime.datetime.fromtimestamp(int(lastTrade['Time']) / 1000000).strftime('%Y-%m-%dT%H:%M:%S')
+				lastTradeTime = datetime.datetime.fromtimestamp(int(lastTrade['Time']) // 1000000).strftime('%Y-%m-%dT%H:%M:%S')
 				logMsg = "Moving gap back, lastTrade has timestamp %s.%s" % (lastTradeTime, str((int(lastTrade['Time']) % 1000000)).zfill(6))
 				print(logMsg)
 				log.append(logMsg)
@@ -326,14 +324,17 @@ def getGap(endId, endTime, trades, startTime, lastTrade, missedTrades, log, wind
 			tradeId += 1
 		return RetVal.SUCCESS
 	except HTTPError as e:
+		logMsg = "Encounted HTTPError %s" % (repr(e))
+		log.append(logMsg)
 		traceback.print_exc()
 		printError(e)
-		return not e.code == 429
 		if e.code == 429:
 			return RetVal.WAIT
 		else:
 			return RetVal.FAILURE
 	except Exception as e:
+		logMsg = "Encounted other exception %s" % (repr(e))
+		log.append(logMsg)
 		traceback.print_exc()
 		printError(e)
 		return RetVal.FAILURE

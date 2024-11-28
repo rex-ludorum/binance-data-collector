@@ -14,6 +14,7 @@ import socket
 from coinbase import jwt_generator
 from functools import cmp_to_key
 from urllib.error import HTTPError
+from enum import Enum, auto
 
 DATABASE_NAME = "coinbase-websocket-data"
 
@@ -31,11 +32,19 @@ NUM_RECORDS = 30
 
 MAX_REST_API_TRADES = 1000
 
+ONE_SECOND_MAX_TRADES = 900
+
 SLIDING_WINDOW_SIZE = 5
 MAX_WINDOW_SIZE = 200
 
 BTC_PORT = 12345
 ETH_PORT = 12346
+
+class RetVal(Enum):
+	WAIT = auto()
+	SUCCESS = auto()
+	GAP_EXCEEDED = auto()
+	FAILURE = auto()
 
 def publishAndPrintError(error, subject):
 	errorMessage = repr(error) + " encountered for " + symbol + " at " + str(time.strftime("%H:%M:%S", time.localtime()))
@@ -273,6 +282,14 @@ def computeAverage(windows):
 	else:
 		return sum(windows['windows']) // len(windows['windows'])
 
+def computeOffset(windows):
+	if max(windows["windows"]) < MAX_WINDOW_SIZE:
+		windowOffset = max(MAX_REST_API_TRADES // max(1, computeAverage(windows)), 1)
+		windowOffset = min(windowOffset, 30)
+		return windowOffset
+	else:
+		return 1
+
 # If we have to reconnect after a websocket exception, get any trades we might have missed
 def handleGap(response, trades, lastTrade, windows):
 	if int(response['trade_id']) > int(lastTrade['tradeId']) + 1:
@@ -289,25 +306,30 @@ def handleGap(response, trades, lastTrade, windows):
 		prevLastTradeId = lastTrade['tradeId']
 		missedTrades = []
 		startingLastTradeId = lastTrade['tradeId']
+
+		# Use a three-second-minimum window since the max observed trades in a one-second window was 260 on Feb 28 2024
+		# Actually, see the test commands for a one-second window with more than 1000 trades
+		windowOffset = computeOffset(windows)
+
 		while True:
-			# Check old last trade time and increase the gap if it's still the same
-			# Use a three-second-minimum window since the max observed trades in a one-second window was 260 on Feb 28 2024
-			# Actually, see the test commands for a one-second window with more than 1000 trades
-			if max(windows["windows"]) < MAX_WINDOW_SIZE:
-				windowOffset = max(MAX_REST_API_TRADES // max(1, computeAverage(windows)), 1)
-				windowOffset = min(windowOffset, 30)
-			else:
-				windowOffset = 1
-			while not getGap(endId, min(startTime + windowOffset, endTime), trades, startTime, lastTrade, missedTrades, log, False, windows):
+			while (retVal := getGap(endId, min(startTime + windowOffset, endTime), trades, startTime, lastTrade, missedTrades, log, windows)) == RetVal.WAIT:
 				# Rate limit is 30 requests per second
 				time.sleep(1 / 30)
-			if startTime + windowOffset >= endTime or int(response['trade_id']) == int(lastTrade['tradeId']) + 1:
+
+			if retVal == RetVal.FAILURE:
 				break
-			if prevLastTradeId == lastTrade['tradeId']:
+			if retVal == RetVal.SUCCESS and startTime + windowOffset >= endTime or endId == int(lastTrade['tradeId']) + 1:
+				break
+
+			if retVal == RetVal.GAP_EXCEEDED:
+				windowOffset = 1
+			elif prevLastTradeId == lastTrade['tradeId'] or retVal == RetVal.SUCCESS:
 				startTime = startTime + windowOffset
+				windowOffset = computeOffset(windows)
 			else:
 				# Might be able to just use the previous endTime as the new startTime like in the above case
 				startTime = int(lastTrade['Time']) // 1000000
+				windowOffset = computeOffset(windows)
 			prevLastTradeId = lastTrade['tradeId']
 
 		if not missedTrades:
@@ -325,7 +347,7 @@ def handleGap(response, trades, lastTrade, windows):
 			errMsg += "\n".join(log)
 			publishAndPrintError(RuntimeError(errMsg), "Requests")
 
-def getGap(endId, endTime, trades, startTime, lastTrade, missedTrades, log, retried, windows):
+def getGap(endId, endTime, trades, startTime, lastTrade, missedTrades, log, windows):
 	url = "https://api.coinbase.com/api/v3/brokerage/products/%s/ticker" % (symbol)
 	params = {"limit": MAX_REST_API_TRADES, "start": str(startTime), "end": str(endTime)}
 	jwt_uri = jwt_generator.format_jwt_uri("GET", "/api/v3/brokerage/products/%s/ticker" % (symbol))
@@ -344,19 +366,31 @@ def getGap(endId, endTime, trades, startTime, lastTrade, missedTrades, log, retr
 			logMsg = "HTTP response contains 0 trades"
 			print(logMsg)
 			log.append(logMsg)
-			return True
+			return RetVal.SUCCESS
 
 		cleanTrades(responseTrades)
 		if not responseTrades:
 			logMsg = "HTTP response contains 0 trades (after cleaning)"
 			print(logMsg)
 			log.append(logMsg)
-			return True
+			return RetVal.SUCCESS
 
 		logMsg = "HTTP response contains %d trades (%s) (%s - %s)" % (len(responseTrades), ", ".join(getRanges(responseTrades)), responseTrades[0]['time'], responseTrades[-1]['time'])
 		print(logMsg)
 		log.append(logMsg)
 		# print(responseTrades)
+
+		tradeId = int(lastTrade['tradeId']) + 1
+		idx = next((i for i, x in enumerate(responseTrades) if int(x['trade_id']) >= tradeId), -1)
+		if idx != -1:
+			formattedDate = dateutil.parser.isoparse(responseTrades[idx]['time'])
+			seconds = int(datetime.datetime.timestamp(formattedDate))
+			if len(responseTrades) > ONE_SECOND_MAX_TRADES and endTime - startTime > 1:
+				lastTradeTime = datetime.datetime.fromtimestamp(int(lastTrade['Time']) // 1000000).strftime('%Y-%m-%dT%H:%M:%S')
+				logMsg = "Moving gap back, lastTrade has timestamp %s.%s" % (lastTradeTime, str((int(lastTrade['Time']) % 1000000)).zfill(6))
+				print(logMsg)
+				log.append(logMsg)
+				return RetVal.GAP_EXCEEDED
 
 		'''
 		windows = []
@@ -388,14 +422,7 @@ def getGap(endId, endTime, trades, startTime, lastTrade, missedTrades, log, retr
 		# Fringe case for when the lastTrade comes after the trades in the response
 		tradeId = int(lastTrade['tradeId'])
 		if tradeId >= int(responseTrades[-1]['trade_id']):
-			if not retried:
-				time.sleep(0.5)
-				logMsg = "Retrying - tradeId %s is geq %s" % (lastTrade['tradeId'], responseTrades[-1]['trade_id'])
-				print(logMsg)
-				log.append(logMsg)
-				return getGap(endId, endTime, trades, startTime, lastTrade, missedTrades, log, True, windows)
-			else:
-				return True
+			return RetVal.SUCCESS
 
 		tradeId = int(lastTrade['tradeId']) + 1
 		while (tradeId < endId):
@@ -411,22 +438,24 @@ def getGap(endId, endTime, trades, startTime, lastTrade, missedTrades, log, retr
 				if (idx == len(responseTrades) - 1):
 					break;
 			else:
-				if not retried:
-					time.sleep(0.5)
-					logMsg = "Retrying - tradeId %s was not found" % (tradeId)
-					print(logMsg)
-					log.append(logMsg)
-					return getGap(endId, endTime, trades, startTime, lastTrade, missedTrades, log, True, windows)
-				else:
-					missedTrades.append(tradeId)
+				missedTrades.append(tradeId)
 			tradeId += 1
-		return True
+		return RetVal.SUCCESS
 	except HTTPError as e:
+		logMsg = "Encounted HTTPError %s" % (repr(e))
+		log.append(logMsg)
+		traceback.print_exc()
 		publishAndPrintError(e, "Requests")
-		return not e.code == 429
+		if e.code == 429:
+			return RetVal.WAIT
+		else:
+			return RetVal.FAILURE
 	except Exception as e:
+		logMsg = "Encounted other exception %s" % (repr(e))
+		log.append(logMsg)
+		traceback.print_exc()
 		publishAndPrintError(e, "Requests")
-		return True
+		return RetVal.FAILURE
 
 def cleanTrades(trades):
 	for idx, _ in enumerate(trades):

@@ -9,7 +9,6 @@ import datetime
 import argparse
 from coinbase import jwt_generator
 from functools import cmp_to_key
-from urllib.error import HTTPError
 from enum import Enum, auto
 
 DATABASE_NAME = "coinbase-websocket-data"
@@ -323,12 +322,12 @@ def getGap(endId, endTime, trades, startTime, lastTrade, missedTrades, log, wind
 				# printError(LookupError("Trade ID " + str(tradeId) + " not found"), "Requests")
 			tradeId += 1
 		return RetVal.SUCCESS
-	except HTTPError as e:
+	except requests.HTTPError as e:
 		logMsg = "Encounted HTTPError %s" % (repr(e))
 		log.append(logMsg)
 		traceback.print_exc()
 		printError(e)
-		if e.code == 429:
+		if response.status_code == 429:
 			return RetVal.WAIT
 		else:
 			return RetVal.FAILURE

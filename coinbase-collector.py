@@ -298,7 +298,7 @@ def handleGap(response, trades, lastTrade, windows):
 		endTime = int(datetime.datetime.timestamp(endDate)) + 1
 		startTime = int(lastTrade['Time']) // 1000000
 		startMicros = str(int(lastTrade['Time']) % 1000000)
-		startDate = datetime.datetime.fromtimestamp(startTime).strftime('%Y-%m-%dT%H:%M:%S') + '.' + startMicros.zfill(6)
+		startDate = datetime.datetime.fromtimestamp(startTime, datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%S') + '.' + startMicros.zfill(6)
 		logMsg = "Gap found: %s - %s (%s - %s)" % (lastTrade['tradeId'], response['trade_id'], startDate, response['time'])
 		print(logMsg)
 		log = [logMsg]
@@ -352,8 +352,8 @@ def getGap(endId, endTime, trades, startTime, lastTrade, missedTrades, log, wind
 	jwt_uri = jwt_generator.format_jwt_uri("GET", "/api/v3/brokerage/products/%s/ticker" % (symbol))
 	jwt_token = jwt_generator.build_rest_jwt(jwt_uri, COINBASE_API_KEY_NAME, COINBASE_API_PRIVATE_KEY)
 	headers = {"Authorization": "Bearer " + jwt_token}
-	startDate = datetime.datetime.fromtimestamp(startTime).strftime('%Y-%m-%dT%H:%M:%S')
-	endDate = datetime.datetime.fromtimestamp(endTime).strftime('%Y-%m-%dT%H:%M:%S')
+	startDate = datetime.datetime.fromtimestamp(startTime, datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%S')
+	endDate = datetime.datetime.fromtimestamp(endTime, datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%S')
 	try:
 		logMsg = "Sending HTTP request for %s trades from %s to %s (lastTradeId: %s)" % (symbol, startDate, endDate, lastTrade['tradeId'])
 		print(logMsg)
@@ -385,7 +385,7 @@ def getGap(endId, endTime, trades, startTime, lastTrade, missedTrades, log, wind
 			formattedDate = dateutil.parser.isoparse(responseTrades[idx]['time'])
 			seconds = int(datetime.datetime.timestamp(formattedDate))
 			if len(responseTrades) > ONE_SECOND_MAX_TRADES and endTime - startTime > 1:
-				lastTradeTime = datetime.datetime.fromtimestamp(int(lastTrade['Time']) // 1000000).strftime('%Y-%m-%dT%H:%M:%S')
+				lastTradeTime = datetime.datetime.fromtimestamp(int(lastTrade['Time']) // 1000000, datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%S')
 				logMsg = "Moving gap back, lastTrade has timestamp %s.%s" % (lastTradeTime, str((int(lastTrade['Time']) % 1000000)).zfill(6))
 				print(logMsg)
 				log.append(logMsg)

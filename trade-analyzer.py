@@ -8,12 +8,12 @@ import socket
 import traceback
 
 FIFTEEN_MIN_IN_MICROSECONDS = 15 * 60 * 1000000
-STOP_LOSS = 1
-TARGET = 1
-WINDOW_IDX = 7
+STOP_LOSS = 0.5
+TARGET = 3
+WINDOW_IDX = 1
 WINDOW = FIFTEEN_MIN_IN_MICROSECONDS * (WINDOW_IDX + 1)
-BUY_PERCENTILE_IDX = 1
-SELL_PERCENTILE_IDX = 0
+BUY_PERCENTILE_IDX = 4
+SELL_PERCENTILE_IDX = 1
 NTFY_TOPIC = os.environ.get("NTFY_TOPIC")
 
 BTC_PORT = 12345
@@ -122,6 +122,7 @@ def processTrade(trade):
 	global timeWindow, buyVol, sellVol
 
 	# print("before: %f, %f" % (buyVol, sellVol))
+	trades.append(trade)
 	if timeWindow == 0:
 		timeWindow = trade['time']
 	elif trade['time'] - timeWindow > WINDOW:
@@ -140,7 +141,6 @@ def processTrade(trade):
 		buyVol += trade['size']
 	else:
 		sellVol += trade['size']
-	trades.append(trade)
 	# print("after: %f, %f" % (buyVol, sellVol))
 	assessTrade(trade)
 

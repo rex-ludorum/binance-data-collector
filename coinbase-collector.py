@@ -537,7 +537,7 @@ writeClient = boto3.client('timestream-write', region_name=REGION_NAME, aws_acce
 mysns = boto3.client("sns", region_name=REGION_NAME, aws_access_key_id=ACCESS_KEY, aws_secret_access_key=AWS_SECRET_ACCESS_KEY)
 
 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM | socket.SOCK_NONBLOCK)
-sock.bind(('localhost', BTC_PORT if symbol == 'BTC-USD' else ETH_PORT))
+sock.bind(('0.0.0.0', BTC_PORT if symbol == 'BTC-USD' else ETH_PORT))
 sock.listen(1)
 connValid = False
 conn = None

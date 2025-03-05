@@ -8,19 +8,28 @@ import socket
 import traceback
 
 FIFTEEN_MIN_IN_MICROSECONDS = 15 * 60 * 1000000
-STOP_LOSS = 0.5
-TARGET = 3
-WINDOW_IDX = 1
+STOP_LOSS = 2
+TARGET = 4
+WINDOW_IDX = 0
 WINDOW = FIFTEEN_MIN_IN_MICROSECONDS * (WINDOW_IDX + 1)
-BUY_PERCENTILE_IDX = 4
-SELL_PERCENTILE_IDX = 1
+BUY_PERCENTILE_IDX = 7
+SELL_PERCENTILE_IDX = 2
+ENTRY_THRESHOLD = 0.3
+
 NTFY_TOPIC = os.environ.get("NTFY_TOPIC")
 EC2_IP = os.environ.get("EC2_IP")
+
+MICROSECONDS_IN_DAY = 86400000000
+MICROSECONDS_IN_WEEK = 604800000000
+CME_CLOSE = 79200000000
+CME_OPEN = 82800000000
+CME_CLOSE_FRIDAY = 165600000000
+CME_OPEN_SUNDAY = 342000000000
 
 BTC_PORT = 12345
 ETH_PORT = 12346
 
-# 60th percentile to 95th percentile in increments of 5 percentiles
+# 30th percentile to 95th percentile in increments of 5 percentiles
 buyVolPercentiles = []
 sellVolPercentiles = []
 
@@ -36,6 +45,11 @@ with open("sellPercentiles", "r") as f:
 		data[-1] = data[-1][:-1]
 		sellVolPercentiles.append([float(x) for x in data])
 
+precomputedTarget = 1 + TARGET * 0.01
+precomputedStopLoss = 1 - STOP_LOSS * 0.01
+precomputedLongEntryThreshold = 1 + ENTRY_THRESHOLD * 0.01
+precomputedShortEntryThreshold = 1 - ENTRY_THRESHOLD * 0.01
+
 buyVolPercentile = buyVolPercentiles[WINDOW_IDX][BUY_PERCENTILE_IDX]
 sellVolPercentile = sellVolPercentiles[WINDOW_IDX][SELL_PERCENTILE_IDX]
 
@@ -49,32 +63,30 @@ buyVol = 0
 sellVol = 0
 trades = []
 entry = []
-maxProfit = 0
+increasing = False
+maxPrice = 1
+minPrice = 1000000
 
 def assessTrade(trade):
-	global entry, maxProfit
+	global entry
 
-	if not entry:
-		if buyVol >= buyVolPercentile:
-			maxProfit = trade['price']
-			entry = [True, trade['price'], trade['time'], trade['tradeId']]
-			data = '%s: Long entry at %f, target = %f, stop loss = %f (%s)' % (symbol, trade['price'], trade['price'] * (1 + TARGET / 100), trade['price'] * (1 - STOP_LOSS / 100), str(datetime.datetime.now(datetime.timezone.utc)))
-			print(data)
-			requests.post("https://ntfy.sh/" + NTFY_TOPIC, data=data)
-		elif sellVol >= sellVolPercentile:
-			maxProfit = trade['price']
-			entry = [False, trade['price'], trade['time'], trade['tradeId']]
-			data = '%s: Short entry at %f, target = %f, stop loss = %f (%s)' % (symbol, trade['price'], trade['price'] * (1 - TARGET / 100), trade['price'] * (1 + STOP_LOSS / 100), str(datetime.datetime.now(datetime.timezone.utc)))
-			print(data)
-			requests.post("https://ntfy.sh/" + NTFY_TOPIC, data=data)
-	else:
+	price = trade['price']
+	microseconds = trade['time']
+	dayRemainder = microseconds % MICROSECONDS_IN_DAY
+	weekRemainder = microseconds % MICROSECONDS_IN_WEEK
+	inClose = dayRemainder >= CME_CLOSE and dayRemainder < CME_OPEN
+	onWeekend = weekRemainder >= CME_CLOSE_FRIDAY and weekRemainder < CME_OPEN_SUNDAY
+
+	if entry:
 		if entry[0]:
-			maxProfit = max(maxProfit, trade['price'])
-			profitMargin = (maxProfit - entry[1]) / entry[1]
-			if profitMargin >= TARGET / 100:
+			profitMargin = price / entry[1]
+			if inClose or profitMargin >= precomputedTarget or profitMargin <= precomputedStopLoss:
 				# startingCapitals[j][i] *= (1 + profitMargin)
 				entry = []
-				data = '%s: Take profit at %f (%s)' % (symbol, maxProfit, str(datetime.datetime.now(datetime.timezone.utc)))
+				if profitMargin >= 1:
+					data = '%s: Take profit at %f (%s)' % (symbol, price, str(datetime.datetime.now(datetime.timezone.utc)))
+				else:
+					data = '%s: Take loss at %f (%s)' % (symbol, price, str(datetime.datetime.now(datetime.timezone.utc)))
 				print(data)
 				requests.post("https://ntfy.sh/" + NTFY_TOPIC, data=data)
 				# tradeLogs[j][i].append("Profit: " + str(price) + " " + trade[1] + "T" + trade[2] + " " + trade[0])
@@ -82,24 +94,15 @@ def assessTrade(trade):
 				# print("Profit: " + str(price) + " " + trade[1] + "T" + trade[2])
 				# print("Capital: " + str(startingCapitals[j]))
 				# wins[j][i] += 1
-			elif trade['price'] <= (1 - STOP_LOSS / 100) * entry[1]:
-				# startingCapitals[j][i] *= 1 - stopLoss / 100
-				entry = []
-				data = '%s: Take loss at %f (%s)' % (symbol, trade['price'], str(datetime.datetime.now(datetime.timezone.utc)))
-				print(data)
-				requests.post("https://ntfy.sh/" + NTFY_TOPIC, data=data)
-				# tradeLogs[j][i].append("Loss: " + str(price) + " " + trade[1] + "T" + trade[2] + " " + trade[0])
-				# tradeLogs[j][i].append("Capital: " + str(startingCapitals[j][i]))
-				# print("Loss: " + str(price) + " " + trade[1] + "T" + trade[2])
-				# print("Capital: " + str(startingCapitals[j]))
-				# losses[j][i] += 1
 		else:
-			maxProfit = min(maxProfit, trade['price'])
-			profitMargin = (entry[1] - maxProfit) / entry[1]
-			if profitMargin >= TARGET / 100:
+			profitMargin = 2 - price / entry[1]
+			if inClose or profitMargin >= precomputedTarget or profitMargin <= precomputedStopLoss:
 				# startingCapitals[j][i] *= (1 + profitMargin)
 				entry = []
-				data = '%s: Take profit at %f (%s)' % (symbol, maxProfit, str(datetime.datetime.now(datetime.timezone.utc)))
+				if profitMargin >= 1:
+					data = '%s: Take profit at %f (%s)' % (symbol, price, str(datetime.datetime.now(datetime.timezone.utc)))
+				else:
+					data = '%s: Take loss at %f (%s)' % (symbol, price, str(datetime.datetime.now(datetime.timezone.utc)))
 				print(data)
 				requests.post("https://ntfy.sh/" + NTFY_TOPIC, data=data)
 				# tradeLogs[j][i].append("Profit: " + str(price) + " " + trade[1] + "T" + trade[2] + " " + trade[0])
@@ -107,21 +110,22 @@ def assessTrade(trade):
 				# print("Profit: " + str(price) + " " + trade[1] + "T" + trade[2])
 				# print("Capital: " + str(startingCapitals[j]))
 				# wins[j][i] += 1
-			elif trade['price'] >= (1 + STOP_LOSS / 100) * entry[1]:
-				# startingCapitals[j][i] *= 1 - stopLoss / 100
-				entry = []
-				data = '%s: Take loss at %f (%s)' % (symbol, trade['price'], str(datetime.datetime.now(datetime.timezone.utc)))
-				print(data)
-				requests.post("https://ntfy.sh/" + NTFY_TOPIC, data=data)
-				# tradeLogs[j][i].append("Loss: " + str(price) + " " + trade[1] + "T" + trade[2] + " " + trade[0])
-				# tradeLogs[j][i].append("Capital: " + str(startingCapitals[j][i]))
-				# print("Loss: " + str(price) + " " + trade[1] + "T" + trade[2])
-				# print("Capital: " + str(startingCapitals[j]))
-				# losses[j][i] += 1
+
+	if not entry and not inClose and not onWeekend:
+		if increasing and price / minPrice >= precomputedLongEntryThreshold and buyVol >= buyVolPercentile:
+			entry = [True, price, microseconds, trade['tradeId']]
+			data = '%s: Long entry at %f, target = %f, stop loss = %f (%s)' % (symbol, price, price * precomputedTarget, price * precomputedStopLoss, str(datetime.datetime.now(datetime.timezone.utc)))
+			print(data)
+			requests.post("https://ntfy.sh/" + NTFY_TOPIC, data=data)
+		elif not increasing and price / maxPrice <= precomputedShortEntryThreshold and sellVol >= sellVolPercentile:
+			entry = [False, price, microseconds, trade['tradeId']]
+			data = '%s: Short entry at %f, target = %f, stop loss = %f (%s)' % (symbol, price, price * (2 - precomputedTarget), price * (2 - precomputedStopLoss), str(datetime.datetime.now(datetime.timezone.utc)))
+			print(data)
+			requests.post("https://ntfy.sh/" + NTFY_TOPIC, data=data)
 
 def processTrade(trade):
 	# print(trade)
-	global timeWindow, buyVol, sellVol
+	global timeWindow, buyVol, sellVol, maxPrice, minPrice, increasing
 
 	# print("before: %f, %f" % (buyVol, sellVol))
 	trades.append(trade)
@@ -144,6 +148,19 @@ def processTrade(trade):
 	else:
 		sellVol += trade['size']
 	# print("after: %f, %f" % (buyVol, sellVol))
+
+	price = trade['price']
+	if increasing:
+		maxPrice = max(maxPrice, price)
+		if price / maxPrice <= precomputedShortEntryThreshold:
+			minPrice = 1000000
+			increasing = False
+	else:
+		minPrice = min(minPrice, price)
+		if price / minPrice >= precomputedLongEntryThreshold:
+			maxPrice = 1
+			increasing = True
+
 	assessTrade(trade)
 
 def processMessageIfPossible(buffer):
@@ -151,6 +168,7 @@ def processMessageIfPossible(buffer):
 		if not buffer:
 			return buffer
 		elif buffer[0] != "{":
+			print("Invalid buffer: " + buffer)
 			return buffer
 		else:
 			nextBracketIdx = buffer.find("}")

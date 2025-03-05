@@ -45,8 +45,11 @@ class RetVal(Enum):
 	GAP_EXCEEDED = auto()
 	FAILURE = auto()
 
-def publishAndPrintError(error, subject):
-	errorMessage = repr(error) + " encountered for " + symbol + " at " + str(time.strftime("%H:%M:%S", time.localtime()))
+def publishAndPrintError(error, subject, addr=None):
+	if addr is None:
+		errorMessage = repr(error) + " encountered for " + symbol + " at " + str(time.strftime("%H:%M:%S", time.localtime()))
+	else:
+		errorMessage = repr(error) + " encountered from " + addr + " for " + symbol + " at " + str(time.strftime("%H:%M:%S", time.localtime()))
 	print(errorMessage)
 	try:
 		mysns.publish(
@@ -171,7 +174,7 @@ def isSocketActive(sock):
 	return bool(readable)
 
 def sendTrade(data):
-	global conn, connValid
+	global conn, addr, connValid
 	if connValid:
 		try:
 			conn.sendall(data.encode())
@@ -184,18 +187,18 @@ def sendTrade(data):
 			conn.close()
 			connValid = False
 			traceback.print_exc()
-			publishAndPrintError(e, "Other Socket 1")
+			publishAndPrintError(e, "Other Socket 1", addr)
 	else:
 		if isSocketActive(sock):
 			try:
-				conn, _ = sock.accept()
+				conn, addr = sock.accept()
 				connValid = True
 				sendTrade(data)
 			except Exception as e:
 				conn.close()
 				connValid = False
 				traceback.print_exc()
-				publishAndPrintError(e, "Other Socket 2")
+				publishAndPrintError(e, "Other Socket 2", addr)
 
 async def collectData():
 	url = "wss://advanced-trade-ws.coinbase.com"
@@ -541,6 +544,7 @@ sock.bind(('0.0.0.0', BTC_PORT if symbol == 'BTC-USD' else ETH_PORT))
 sock.listen(1)
 connValid = False
 conn = None
+addr = None
 
 asyncio.run(collectData())
 

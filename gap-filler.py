@@ -13,7 +13,6 @@ from enum import Enum, auto
 
 DATABASE_NAME = "coinbase-websocket-data"
 
-COINBASE_WEBSOCKET_ARN = "arn:aws:sns:us-east-2:471112880949:coinbase-websocket-notifications"
 ACCESS_KEY = "AKIAW3MEECM242BBX6NJ"
 AWS_SECRET_ACCESS_KEY = os.environ.get("AWS_SECRET_ACCESS_KEY")
 

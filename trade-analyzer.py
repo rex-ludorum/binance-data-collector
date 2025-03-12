@@ -26,6 +26,8 @@ CME_OPEN = 82800000000
 CME_CLOSE_FRIDAY = 165600000000
 CME_OPEN_SUNDAY = 342000000000
 
+MARCH_1_1972_IN_SECONDS = 68256000
+
 BTC_PORT = 12345
 ETH_PORT = 12346
 
@@ -53,6 +55,40 @@ precomputedShortEntryThreshold = 1 - ENTRY_THRESHOLD * 0.01
 buyVolPercentile = buyVolPercentiles[WINDOW_IDX][BUY_PERCENTILE_IDX]
 sellVolPercentile = sellVolPercentiles[WINDOW_IDX][SELL_PERCENTILE_IDX]
 
+def isDST(timestamp):
+	timestamp //= 1000000
+	leapYearCycles = (timestamp - MARCH_1_1972_IN_SECONDS) // ((365 * 4 + 1) * 86400)
+	days = (timestamp - MARCH_1_1972_IN_SECONDS) // 86400
+	daysInCurrentCycle = days % (365 * 4 + 1)
+	yearsInCurrentCycle = daysInCurrentCycle // 365
+	daysInCurrentYear = daysInCurrentCycle % 365
+
+	timeInCurrentDay = timestamp % 86400
+
+	marchFirstDayOfWeekInCurrentCycle = leapYearCycles * (365 * 4 + 1) % 7
+	marchFirstDayOfWeekInCurrentYear = (marchFirstDayOfWeekInCurrentCycle + yearsInCurrentCycle * 365) % 7
+
+	if marchFirstDayOfWeekInCurrentYear > 4:
+		dstStart = 11 - marchFirstDayOfWeekInCurrentYear + 7
+	else:
+		dstStart = 4 - marchFirstDayOfWeekInCurrentYear + 7
+	dstEnd = dstStart + 238
+	# dayInCurrentYear = (marchFirstDayOfWeekInCurrentYear + daysInCurrentYear) % 7
+	# print(marchFirstDayOfWeekInCurrentCycle)
+	# print(marchFirstDayOfWeekInCurrentYear)
+	# print(dayInCurrentYear)
+	# print(daysInCurrentYear)
+
+	isDST = False
+	if daysInCurrentYear == dstStart:
+		isDST = timeInCurrentDay >= 7200
+	elif daysInCurrentYear == dstEnd:
+		isDST = timeInCurrentDay < 7200
+	else:
+		isDST = daysInCurrentYear > dstStart and daysInCurrentYear < dstEnd
+	
+	return isDST
+
 def isSocketActive(sock):
 	# Use select to check if the socket is readable
 	readable, _, _ = select.select([sock], [], [], 0)
@@ -72,8 +108,8 @@ def assessTrade(trade):
 
 	price = trade['price']
 	microseconds = trade['time']
-	dayRemainder = microseconds % MICROSECONDS_IN_DAY
-	weekRemainder = microseconds % MICROSECONDS_IN_WEEK
+	dayRemainder = microseconds % MICROSECONDS_IN_DAY + isDST(microseconds)
+	weekRemainder = microseconds % MICROSECONDS_IN_WEEK + isDST(microseconds)
 	inClose = dayRemainder >= CME_CLOSE and dayRemainder < CME_OPEN
 	onWeekend = weekRemainder >= CME_CLOSE_FRIDAY and weekRemainder < CME_OPEN_SUNDAY
 

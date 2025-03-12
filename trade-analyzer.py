@@ -1,4 +1,5 @@
 import argparse
+import boto3
 import datetime
 import json
 import os
@@ -16,8 +17,14 @@ BUY_PERCENTILE_IDX = 7
 SELL_PERCENTILE_IDX = 2
 ENTRY_THRESHOLD = 0.3
 
+COINBASE_WEBSOCKET_ARN = "arn:aws:sns:us-east-2:471112880949:coinbase-websocket-notifications"
+ACCESS_KEY = "AKIAW3MEECM242BBX6NJ"
+
+REGION_NAME = "us-east-2"
+
 NTFY_TOPIC = os.environ.get("NTFY_TOPIC")
 EC2_IP = os.environ.get("EC2_IP")
+AWS_SECRET_ACCESS_KEY = os.environ.get("AWS_SECRET_ACCESS_KEY")
 
 MICROSECONDS_IN_DAY = 86400000000
 MICROSECONDS_IN_WEEK = 604800000000
@@ -54,6 +61,18 @@ precomputedShortEntryThreshold = 1 - ENTRY_THRESHOLD * 0.01
 
 buyVolPercentile = buyVolPercentiles[WINDOW_IDX][BUY_PERCENTILE_IDX]
 sellVolPercentile = sellVolPercentiles[WINDOW_IDX][SELL_PERCENTILE_IDX]
+
+def publishAndPrintError(error, subject):
+	errorMessage = repr(error) + " encountered for " + symbol + " at " + str(time.strftime("%H:%M:%S", time.localtime()))
+	print(errorMessage)
+	try:
+		mysns.publish(
+			TopicArn = COINBASE_WEBSOCKET_ARN,
+			Message = errorMessage,
+			Subject = subject + " Exception",
+		)
+	except Exception as e:
+		print(repr(e), "encountered at", str(time.strftime("%H:%M:%S", time.localtime())), "during publishing")
 
 def isDST(timestamp):
 	timestamp //= 1000000
@@ -103,6 +122,12 @@ increasing = False
 maxPrice = 1
 minPrice = 1000000
 
+def postAndHandleError(subject, message):
+	try:
+		requests.post("https://ntfy.sh/" + NTFY_TOPIC, data=message)
+	except Exception as e:
+		publishAndPrintError(e, subject)
+
 def assessTrade(trade):
 	global entry
 
@@ -124,7 +149,7 @@ def assessTrade(trade):
 				else:
 					data = '%s: Take loss at %f (%s)' % (symbol, price, str(datetime.datetime.now(datetime.timezone.utc)))
 				print(data)
-				requests.post("https://ntfy.sh/" + NTFY_TOPIC, data=data)
+				postAndHandleError("Trade Notifications", data)
 				# tradeLogs[j][i].append("Profit: " + str(price) + " " + trade[1] + "T" + trade[2] + " " + trade[0])
 				# tradeLogs[j][i].append("Capital: " + str(startingCapitals[j][i]))
 				# print("Profit: " + str(price) + " " + trade[1] + "T" + trade[2])
@@ -140,7 +165,7 @@ def assessTrade(trade):
 				else:
 					data = '%s: Take loss at %f (%s)' % (symbol, price, str(datetime.datetime.now(datetime.timezone.utc)))
 				print(data)
-				requests.post("https://ntfy.sh/" + NTFY_TOPIC, data=data)
+				postAndHandleError("Trade Notifications", data)
 				# tradeLogs[j][i].append("Profit: " + str(price) + " " + trade[1] + "T" + trade[2] + " " + trade[0])
 				# tradeLogs[j][i].append("Capital: " + str(startingCapitals[j][i]))
 				# print("Profit: " + str(price) + " " + trade[1] + "T" + trade[2])
@@ -152,12 +177,12 @@ def assessTrade(trade):
 			entry = [True, price, microseconds, trade['tradeId']]
 			data = '%s: Long entry at %f, target = %f, stop loss = %f (%s)' % (symbol, price, price * precomputedTarget, price * precomputedStopLoss, str(datetime.datetime.now(datetime.timezone.utc)))
 			print(data)
-			requests.post("https://ntfy.sh/" + NTFY_TOPIC, data=data)
+			postAndHandleError("Trade Notifications", data)
 		elif not increasing and price / maxPrice <= precomputedShortEntryThreshold and sellVol >= sellVolPercentile:
 			entry = [False, price, microseconds, trade['tradeId']]
 			data = '%s: Short entry at %f, target = %f, stop loss = %f (%s)' % (symbol, price, price * (2 - precomputedTarget), price * (2 - precomputedStopLoss), str(datetime.datetime.now(datetime.timezone.utc)))
 			print(data)
-			requests.post("https://ntfy.sh/" + NTFY_TOPIC, data=data)
+			postAndHandleError("Trade Notifications", data)
 
 def processTrade(trade):
 	# print(trade)
@@ -204,8 +229,8 @@ def processMessageIfPossible(buffer):
 		if not buffer:
 			return buffer
 		elif buffer[0] != "{":
-			print("Invalid buffer: " + buffer)
-			return buffer
+			publishAndPrintError(RuntimeError("Invalid buffer: " + buffer), "Trade Analyzer")
+			return ""
 		else:
 			nextBracketIdx = buffer.find("}")
 			if nextBracketIdx != -1:
@@ -224,6 +249,7 @@ def analyzeTrades():
 			try:
 				data = sock.recv(1024)
 				if not data:
+					publishAndPrintError(RuntimeError("No data received"), "Trade Analyzer Socket 1")
 					sockValid = False
 					sock.close()
 				else:
@@ -237,6 +263,7 @@ def analyzeTrades():
 				sockValid = False
 				sock.close()
 				traceback.print_exc()
+				publishAndPrintError(e, "Trade Analyzer Socket 1")
 		else:
 			try:
 				sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -247,10 +274,13 @@ def analyzeTrades():
 			except Exception as e:
 				sock.close()
 				traceback.print_exc()
+				publishAndPrintError(e, "Trade Analyzer Socket 2")
 
 parser = argparse.ArgumentParser(description='Analyze trading data from a socket and send trading signals')
 parser.add_argument('symbol', help='the trading pair to anaylze', choices=['BTC-USD', 'ETH-USD'])
 args = parser.parse_args()
 symbol = vars(args)['symbol']
+
+mysns = boto3.client("sns", region_name=REGION_NAME, aws_access_key_id=ACCESS_KEY, aws_secret_access_key=AWS_SECRET_ACCESS_KEY)
 
 analyzeTrades()

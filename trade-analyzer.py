@@ -26,6 +26,7 @@ NTFY_TOPIC = os.environ.get("NTFY_TOPIC")
 EC2_IP = os.environ.get("EC2_IP")
 AWS_SECRET_ACCESS_KEY = os.environ.get("AWS_SECRET_ACCESS_KEY")
 
+MICROSECONDS_IN_HOUR = 3600000000
 MICROSECONDS_IN_DAY = 86400000000
 MICROSECONDS_IN_WEEK = 604800000000
 CME_CLOSE = 79200000000
@@ -133,8 +134,8 @@ def assessTrade(trade):
 
 	price = trade['price']
 	microseconds = trade['time']
-	dayRemainder = microseconds % MICROSECONDS_IN_DAY + isDST(microseconds)
-	weekRemainder = microseconds % MICROSECONDS_IN_WEEK + isDST(microseconds)
+	dayRemainder = microseconds % MICROSECONDS_IN_DAY + isDST(microseconds) * MICROSECONDS_IN_HOUR
+	weekRemainder = microseconds % MICROSECONDS_IN_WEEK + isDST(microseconds) * MICROSECONDS_IN_HOUR
 	inClose = dayRemainder >= CME_CLOSE and dayRemainder < CME_OPEN
 	onWeekend = weekRemainder >= CME_CLOSE_FRIDAY and weekRemainder < CME_OPEN_SUNDAY
 

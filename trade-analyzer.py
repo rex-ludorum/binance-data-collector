@@ -99,15 +99,12 @@ def isDST(timestamp):
 	# print(dayInCurrentYear)
 	# print(daysInCurrentYear)
 
-	isDST = False
 	if daysInCurrentYear == dstStart:
-		isDST = timeInCurrentDay >= 7200
+		return timeInCurrentDay >= 7200
 	elif daysInCurrentYear == dstEnd:
-		isDST = timeInCurrentDay < 7200
+		return timeInCurrentDay < 7200
 	else:
-		isDST = daysInCurrentYear > dstStart and daysInCurrentYear < dstEnd
-	
-	return isDST
+		return daysInCurrentYear > dstStart and daysInCurrentYear < dstEnd
 
 def isSocketActive(sock):
 	# Use select to check if the socket is readable

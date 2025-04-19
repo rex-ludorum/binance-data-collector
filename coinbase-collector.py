@@ -49,7 +49,7 @@ def publishAndPrintError(error, subject, addr=None):
 	if addr is None:
 		errorMessage = repr(error) + " encountered for " + symbol + " at " + str(time.strftime("%H:%M:%S", time.localtime()))
 	else:
-		errorMessage = repr(error) + " encountered from " + addr + " for " + symbol + " at " + str(time.strftime("%H:%M:%S", time.localtime()))
+		errorMessage = repr(error) + " encountered from " + ":".join(map(str, addr)) + " for " + symbol + " at " + str(time.strftime("%H:%M:%S", time.localtime()))
 	print(errorMessage)
 	try:
 		mysns.publish(

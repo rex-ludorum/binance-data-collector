@@ -444,7 +444,7 @@ def getGap(endId, endTime, trades, startTime, lastTrade, missedTrades, log, wind
 			tradeId += 1
 		return RetVal.SUCCESS
 	except requests.HTTPError as e:
-		logMsg = "Encounted HTTPError %s" % (repr(e))
+		logMsg = "Encountered HTTPError %s" % (repr(e))
 		log.append(logMsg)
 		traceback.print_exc()
 		publishAndPrintError(e, "Requests")
@@ -453,7 +453,7 @@ def getGap(endId, endTime, trades, startTime, lastTrade, missedTrades, log, wind
 		else:
 			return RetVal.FAILURE
 	except Exception as e:
-		logMsg = "Encounted other exception %s" % (repr(e))
+		logMsg = "Encountered other exception %s" % (repr(e))
 		log.append(logMsg)
 		traceback.print_exc()
 		publishAndPrintError(e, "Requests")

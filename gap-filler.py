@@ -26,7 +26,7 @@ NUM_RECORDS = 30
 
 MAX_REST_API_TRADES = 1000
 
-ONE_SECOND_MAX_TRADES = 900
+ONE_SECOND_MAX_TRADES = 800
 
 SLIDING_WINDOW_SIZE = 5
 MAX_WINDOW_SIZE = 200
@@ -162,10 +162,10 @@ def computeAverage(windows):
 
 def computeOffset(windows):
 	if not windows['windows']:
-		return 30
+		return 120
 	elif max(windows["windows"]) < MAX_WINDOW_SIZE:
 		windowOffset = max(MAX_REST_API_TRADES // max(1, computeAverage(windows)), 1)
-		windowOffset = min(windowOffset, 30)
+		windowOffset = min(windowOffset, 120)
 		return windowOffset
 	else:
 		return 1

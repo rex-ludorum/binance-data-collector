@@ -160,9 +160,9 @@ def assessTrade(trade):
 				# startingCapitals[j][i] *= (1 + profitMargin)
 				entry = []
 				if profitMargin >= 1:
-					data = '%s: Take profit at %f (%s)' % (symbol, price, str(datetime.datetime.now(datetime.timezone.utc)))
+					data = '%s: Take profit at %.2f (%s)' % (symbol, price, str(datetime.datetime.now(datetime.timezone.utc)))
 				else:
-					data = '%s: Take loss at %f (%s)' % (symbol, price, str(datetime.datetime.now(datetime.timezone.utc)))
+					data = '%s: Take loss at %.2f (%s)' % (symbol, price, str(datetime.datetime.now(datetime.timezone.utc)))
 				print(data)
 				postAndHandleError("Trade Notifications", data)
 				# tradeLogs[j][i].append("Profit: " + str(price) + " " + trade[1] + "T" + trade[2] + " " + trade[0])
@@ -174,12 +174,12 @@ def assessTrade(trade):
 	if not entry and not inClose and not onWeekend:
 		if increasing and price / minPrice >= precomputedLongEntryThreshold and buyVol >= buyVolPercentile:
 			entry = [True, price, microseconds, trade['tradeId']]
-			data = '%s: Long entry at %f, target = %f, stop loss = %f (%s)' % (symbol, price, price * precomputedTarget, price * precomputedStopLoss, str(datetime.datetime.now(datetime.timezone.utc)))
+			data = '%s: Long entry at %.2f, target = %.2f, stop loss = %.2f (%s)' % (symbol, price, price * precomputedTarget, price * precomputedStopLoss, str(datetime.datetime.now(datetime.timezone.utc)))
 			print(data)
 			postAndHandleError("Trade Notifications", data)
 		elif not increasing and price / maxPrice <= precomputedShortEntryThreshold and sellVol >= sellVolPercentile:
 			entry = [False, price, microseconds, trade['tradeId']]
-			data = '%s: Short entry at %f, target = %f, stop loss = %f (%s)' % (symbol, price, price * (2 - precomputedTarget), price * (2 - precomputedStopLoss), str(datetime.datetime.now(datetime.timezone.utc)))
+			data = '%s: Short entry at %.2f, target = %.2f, stop loss = %.2f (%s)' % (symbol, price, price * (2 - precomputedTarget), price * (2 - precomputedStopLoss), str(datetime.datetime.now(datetime.timezone.utc)))
 			print(data)
 			postAndHandleError("Trade Notifications", data)
 

@@ -144,9 +144,9 @@ def assessTrade(trade):
 				# startingCapitals[j][i] *= (1 + profitMargin)
 				entry = []
 				if profitMargin >= 1:
-					data = '%s: Take profit at %f (%s)' % (symbol, price, str(datetime.datetime.now(datetime.timezone.utc)))
+					data = '%s: Take profit at %.2f (%s)' % (symbol, price, str(datetime.datetime.now(datetime.timezone.utc)))
 				else:
-					data = '%s: Take loss at %f (%s)' % (symbol, price, str(datetime.datetime.now(datetime.timezone.utc)))
+					data = '%s: Take loss at %.2f (%s)' % (symbol, price, str(datetime.datetime.now(datetime.timezone.utc)))
 				print(data)
 				postAndHandleError("Trade Notifications", data)
 				# tradeLogs[j][i].append("Profit: " + str(price) + " " + trade[1] + "T" + trade[2] + " " + trade[0])

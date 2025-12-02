@@ -28,8 +28,10 @@ MAX_REST_API_TRADES = 1000
 
 ONE_SECOND_MAX_TRADES = 750
 
-SLIDING_WINDOW_SIZE = 5
+SLIDING_WINDOW_SIZE = 30
 MAX_WINDOW_SIZE = 200
+MIN_WINDOW_SIZE = 40
+MAX_OFFSET = 120
 
 class RetVal(Enum):
 	WAIT = auto()
@@ -162,10 +164,14 @@ def computeAverage(windows):
 
 def computeOffset(windows):
 	if not windows['windows']:
-		return 120
+		return MAX_OFFSET
+	elif max(windows["windows"]) < MIN_WINDOW_SIZE:
+		windowOffset = max(ONE_SECOND_MAX_TRADES // max(1, max(windows['windows'])), 1)
+		windowOffset = min(windowOffset, MAX_OFFSET)
+		return windowOffset
 	elif max(windows["windows"]) < MAX_WINDOW_SIZE:
-		windowOffset = max(MAX_REST_API_TRADES // max(1, computeAverage(windows)), 1)
-		windowOffset = min(windowOffset, 120)
+		windowOffset = max(ONE_SECOND_MAX_TRADES // max(1, computeAverage(windows)), 1)
+		windowOffset = min(windowOffset, MAX_OFFSET)
 		return windowOffset
 	else:
 		return 1
@@ -243,6 +249,7 @@ def getGap(endId, endTime, trades, startTime, lastTrade, missedTrades, log, wind
 		response = requests.get(url, params=params, headers=headers)
 		response.raise_for_status()
 		responseTrades = response.json()['trades']
+		length = len(responseTrades)
 		if not responseTrades:
 			logMsg = "HTTP response contains 0 trades"
 			print(logMsg)
@@ -266,7 +273,7 @@ def getGap(endId, endTime, trades, startTime, lastTrade, missedTrades, log, wind
 		if idx != -1:
 			formattedDate = dateutil.parser.isoparse(responseTrades[idx]['time'])
 			seconds = int(datetime.datetime.timestamp(formattedDate))
-			if len(responseTrades) > ONE_SECOND_MAX_TRADES and endTime - startTime > 1:
+			if length >= MAX_REST_API_TRADES and endTime - startTime > 1:
 				lastTradeTime = datetime.datetime.fromtimestamp(int(lastTrade['Time']) // 1000000, datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%S')
 				logMsg = "Moving gap back, lastTrade has timestamp %s.%s" % (lastTradeTime, str((int(lastTrade['Time']) % 1000000)).zfill(6))
 				print(logMsg)
@@ -301,11 +308,9 @@ def getGap(endId, endTime, trades, startTime, lastTrade, missedTrades, log, wind
 		'''
 
 		# Fringe case for when the lastTrade comes after the trades in the response
-		tradeId = int(lastTrade['tradeId'])
-		if tradeId >= int(responseTrades[-1]['trade_id']):
+		if int(lastTrade['tradeId']) >= int(responseTrades[-1]['trade_id']):
 			return RetVal.SUCCESS
 
-		tradeId = int(lastTrade['tradeId']) + 1
 		while (tradeId < endId):
 			idx = next((i for i, x in enumerate(responseTrades) if int(x['trade_id']) == tradeId), -1)
 			if (idx != -1):
@@ -315,7 +320,7 @@ def getGap(endId, endTime, trades, startTime, lastTrade, missedTrades, log, wind
 				checkWriteThreshold(trades, False)
 				# How do we know if we got all the trades in this given window or if there are still missing ones after the last?
 				if (idx == len(responseTrades) - 1):
-					break;
+					break
 			else:
 				missedTrades.append(tradeId)
 				# printError(LookupError("Trade ID " + str(tradeId) + " not found"), "Requests")
@@ -326,7 +331,7 @@ def getGap(endId, endTime, trades, startTime, lastTrade, missedTrades, log, wind
 		log.append(logMsg)
 		traceback.print_exc()
 		printError(e)
-		if response.status_code == 429:
+		if response.status_code == 429 or response.status_code == 502 or response.status_code == 500 or response.status_code == 401 or response.status_code == 524 or response.status_code == 503 or response.status_code == 404 or response.status_code == 504:
 			return RetVal.WAIT
 		else:
 			return RetVal.FAILURE

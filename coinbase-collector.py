@@ -254,7 +254,7 @@ async def collectData():
 			publishAndPrintError(e, "Websocket ConnectionClosedOK")
 		except websockets.ConnectionClosedError as e:
 			traceback.print_exc()
-			if not (e.code is None and e.reason is None):
+			if not (e.rcvd is None and e.sent is None and e.rcvd_then_sent is None):
 				publishAndPrintError(e, "Websocket ConnectionClosedError")
 		except Exception as e:
 			traceback.print_exc()

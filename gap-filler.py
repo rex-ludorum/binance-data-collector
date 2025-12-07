@@ -11,7 +11,7 @@ from coinbase import jwt_generator
 from functools import cmp_to_key
 from enum import Enum, auto
 
-DATABASE_NAME = "coinbase-websocket-data"
+DATABASE_NAME = "coinbase-data-fixed"
 
 ACCESS_KEY = "AKIAW3MEECM242BBX6NJ"
 AWS_SECRET_ACCESS_KEY = os.environ.get("AWS_SECRET_ACCESS_KEY")
@@ -115,13 +115,13 @@ def writeRecords(records):
 		printError(e)
 
 # Timestream does not allow two records with the same timestamp and dimensions to have different measure values
-# Therefore, add one us to the later timestamp
+# Therefore, add at least one us to the later timestamp and leave space for missing records if the trade ID leaves a gap between the last trade
 def updateRecordTime(record, lastTrade, recordList):
 	recordTime = record['Time']
-	if lastTrade and lastTrade['Time'] != '0' and int(record['Time']) <= int(lastTrade['Time']) + int(lastTrade['offset']):
-		record['Time'] = str(int(lastTrade['Time']) + int(lastTrade['offset']) + 1)
+	if lastTrade and int(record['Time']) <= int(lastTrade['Time']) + int(lastTrade['offset']):
+		record['Time'] = str(int(lastTrade['Time']) + int(lastTrade['offset']) + int(getTradeIds([record])[0]) - int(lastTrade['tradeId']))
 		# print("Time %s for %s conflicts with last trade time (%s with offset %s, tradeId %s), updating to %s" % (recordTime, symbol, lastTrade['Time'], lastTrade['offset'], lastTrade['tradeId'], record['Time']))
-		lastTrade['offset'] = str(int(lastTrade['offset']) + 1)
+		lastTrade['offset'] = str(int(lastTrade['offset']) + int(getTradeIds([record])[0]) - int(lastTrade['tradeId']))
 	else:
 		lastTrade['Time'] = recordTime
 		lastTrade['offset'] = str(0)

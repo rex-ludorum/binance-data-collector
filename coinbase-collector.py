@@ -135,7 +135,7 @@ def writeRecords(records):
 # Therefore, add at least one us to the later timestamp and leave space for missing records if the trade ID leaves a gap between the last trade
 def updateRecordTime(record, lastTrade, recordList):
 	recordTime = record['Time']
-	if lastTrade and int(record['Time']) <= int(lastTrade['Time']) + int(lastTrade['offset']):
+	if lastTrade and int(record['Time']) <= int(lastTrade['Time']) + int(lastTrade['offset']) + int(getTradeIds([record])[0]) - int(lastTrade['tradeId']):
 		record['Time'] = str(int(lastTrade['Time']) + int(lastTrade['offset']) + int(getTradeIds([record])[0]) - int(lastTrade['tradeId']))
 		# print("Time %s for %s conflicts with last trade time (%s with offset %s, tradeId %s), updating to %s" % (recordTime, symbol, lastTrade['Time'], lastTrade['offset'], lastTrade['tradeId'], record['Time']))
 		lastTrade['offset'] = str(int(lastTrade['offset']) + int(getTradeIds([record])[0]) - int(lastTrade['tradeId']))

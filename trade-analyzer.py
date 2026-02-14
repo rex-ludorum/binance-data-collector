@@ -37,6 +37,10 @@ CME_OPEN_SUNDAY = 342000000000
 
 MARCH_1_1972_IN_SECONDS = 68256000
 
+DAYS_IN_LEAP_YEAR_CYCLE = 1461
+
+SECONDS_IN_DAY = 86400
+
 BTC_PORT = 12345
 ETH_PORT = 12346
 
@@ -78,14 +82,13 @@ def publishAndPrintError(error, subject):
 
 def isDST(timestamp):
 	timestamp //= 1000000
-	leapYearCycles = (timestamp - MARCH_1_1972_IN_SECONDS) // ((365 * 4 + 1) * 86400)
-	days = (timestamp - MARCH_1_1972_IN_SECONDS) // 86400
-	daysInCurrentCycle = days % (365 * 4 + 1)
+	days = (timestamp - MARCH_1_1972_IN_SECONDS) // SECONDS_IN_DAY
+	daysInCurrentCycle = days % DAYS_IN_LEAP_YEAR_CYCLE
 	daysInCurrentYear = daysInCurrentCycle % 365
 
-	timeInCurrentDay = timestamp % 86400
+	timeInCurrentDay = timestamp % SECONDS_IN_DAY
 
-	marchFirstDayOfWeekInCurrentCycle = leapYearCycles * (365 * 4 + 1) % 7
+	marchFirstDayOfWeekInCurrentCycle = (days - daysInCurrentCycle) % 7
 	marchFirstDayOfWeekInCurrentYear = (marchFirstDayOfWeekInCurrentCycle + daysInCurrentCycle - daysInCurrentYear) % 7
 
 	if marchFirstDayOfWeekInCurrentYear > 4:

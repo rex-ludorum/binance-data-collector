@@ -81,13 +81,12 @@ def isDST(timestamp):
 	leapYearCycles = (timestamp - MARCH_1_1972_IN_SECONDS) // ((365 * 4 + 1) * 86400)
 	days = (timestamp - MARCH_1_1972_IN_SECONDS) // 86400
 	daysInCurrentCycle = days % (365 * 4 + 1)
-	yearsInCurrentCycle = daysInCurrentCycle // 365
 	daysInCurrentYear = daysInCurrentCycle % 365
 
 	timeInCurrentDay = timestamp % 86400
 
 	marchFirstDayOfWeekInCurrentCycle = leapYearCycles * (365 * 4 + 1) % 7
-	marchFirstDayOfWeekInCurrentYear = (marchFirstDayOfWeekInCurrentCycle + yearsInCurrentCycle * 365) % 7
+	marchFirstDayOfWeekInCurrentYear = (marchFirstDayOfWeekInCurrentCycle + daysInCurrentCycle - daysInCurrentYear) % 7
 
 	if marchFirstDayOfWeekInCurrentYear > 4:
 		dstStart = 11 - marchFirstDayOfWeekInCurrentYear + 7

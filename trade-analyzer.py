@@ -88,8 +88,7 @@ def isDST(timestamp):
 
 	timeInCurrentDay = timestamp % SECONDS_IN_DAY
 
-	marchFirstDayOfWeekInCurrentCycle = (days - daysInCurrentCycle) % 7
-	marchFirstDayOfWeekInCurrentYear = (marchFirstDayOfWeekInCurrentCycle + daysInCurrentCycle - daysInCurrentYear) % 7
+	marchFirstDayOfWeekInCurrentYear = (days - daysInCurrentYear) % 7
 
 	if marchFirstDayOfWeekInCurrentYear > 4:
 		dstStart = 11 - marchFirstDayOfWeekInCurrentYear + 7

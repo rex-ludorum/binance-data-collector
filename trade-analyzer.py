@@ -10,12 +10,12 @@ import time
 import traceback
 
 FIFTEEN_MIN_IN_MICROSECONDS = 15 * 60 * 1000000
-STOP_LOSS = 1
-TARGET = 3.5
-WINDOW_IDX = 1
+STOP_LOSS = 0.25
+TARGET = 4.75
+WINDOW_IDX = 0
 WINDOW = FIFTEEN_MIN_IN_MICROSECONDS * (WINDOW_IDX + 1)
-BUY_PERCENTILE_IDX = 4
-SELL_PERCENTILE_IDX = 2
+BUY_PERCENTILE_IDX = 28
+SELL_PERCENTILE_IDX = 17
 ENTRY_THRESHOLD = 0.35
 
 COINBASE_WEBSOCKET_ARN = "arn:aws:sns:us-east-2:471112880949:coinbase-websocket-notifications"
@@ -48,13 +48,13 @@ ETH_PORT = 12346
 buyVolPercentiles = []
 sellVolPercentiles = []
 
-with open("buyPercentiles", "r") as f:
+with open("buyPercentilesDollarsBTC", "r") as f:
 	for line in f:
 		data = line.split(" ")
 		data[-1] = data[-1][:-1]
 		buyVolPercentiles.append([float(x) for x in data])
 
-with open("sellPercentiles", "r") as f:
+with open("sellPercentilesDollarsBTC", "r") as f:
 	for line in f:
 		data = line.split(" ")
 		data[-1] = data[-1][:-1]
@@ -172,6 +172,7 @@ def assessTrade(trade):
 				# print("Capital: " + str(startingCapitals[j]))
 				# wins[j][i] += 1
 
+	'''
 	if not entry and not inClose and not onWeekend:
 		if increasing and price / minPrice >= precomputedLongEntryThreshold and buyVol >= buyVolPercentile:
 			entry = [True, price, microseconds, trade['tradeId']]
@@ -179,6 +180,18 @@ def assessTrade(trade):
 			print(data)
 			postAndHandleError("Trade Notifications", data)
 		elif not increasing and price / maxPrice <= precomputedShortEntryThreshold and sellVol >= sellVolPercentile:
+			entry = [False, price, microseconds, trade['tradeId']]
+			data = '%s: Short entry at %.2f, target = %.2f, stop loss = %.2f (%s)' % (symbol, price, price * (2 - precomputedTarget), price * (2 - precomputedStopLoss), str(datetime.datetime.now(datetime.timezone.utc)))
+			print(data)
+			postAndHandleError("Trade Notifications", data)
+	'''
+	if not entry and not inClose and not onWeekend:
+		if buyVol >= buyVolPercentile:
+			entry = [True, price, microseconds, trade['tradeId']]
+			data = '%s: Long entry at %.2f, target = %.2f, stop loss = %.2f (%s)' % (symbol, price, price * precomputedTarget, price * precomputedStopLoss, str(datetime.datetime.now(datetime.timezone.utc)))
+			print(data)
+			postAndHandleError("Trade Notifications", data)
+		elif sellVol >= sellVolPercentile:
 			entry = [False, price, microseconds, trade['tradeId']]
 			data = '%s: Short entry at %.2f, target = %.2f, stop loss = %.2f (%s)' % (symbol, price, price * (2 - precomputedTarget), price * (2 - precomputedStopLoss), str(datetime.datetime.now(datetime.timezone.utc)))
 			print(data)
@@ -195,7 +208,7 @@ def processTrade(trade):
 	elif trade['time'] - timeWindow > WINDOW:
 		for i in range(len(trades)):
 			if trade['time'] - trades[i]['time'] > WINDOW:
-				newVol = trades[i]['size']
+				newVol = trades[i]['size'] * trades[i]['price']
 				if not trades[i]['isBuyerMaker']:
 					buyVol -= newVol
 				else:
@@ -205,9 +218,9 @@ def processTrade(trade):
 				del trades[:i]
 				break
 	if not trade['isBuyerMaker']:
-		buyVol += trade['size']
+		buyVol += trade['size'] * trade['price']
 	else:
-		sellVol += trade['size']
+		sellVol += trade['size'] * trade['price']
 	# print("after: %f, %f" % (buyVol, sellVol))
 
 	price = trade['price']
